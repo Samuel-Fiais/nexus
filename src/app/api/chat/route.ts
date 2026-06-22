@@ -1,39 +1,33 @@
-import type { ProviderId } from "@/lib/ai/config";
+import { openai } from '@ai-sdk/openai';
+import { anthropic } from '@ai-sdk/anthropic';
+import { google } from '@ai-sdk/google';
+import { streamText } from 'ai';
 
-type ChatRequest = {
-  messages?: { role: "user" | "assistant"; content: string }[];
-  provider?: ProviderId;
-  model?: string;
+const providerMap: Record<string, any> = {
+  openai,
+  anthropic,
+  google,
 };
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as ChatRequest;
-  const latest = body.messages?.filter((message) => message.role === "user").at(-1);
-  const encoder = new TextEncoder();
+  const { messages, provider, model } = await request.json() as {
+    messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
+    provider: string;
+    model: string;
+  };
 
-  const text = [
-    `Resposta local via ${body.provider ?? "openai"}/${body.model ?? "modelo"}.`,
-    latest?.content
-      ? ` Voce disse: "${latest.content}".`
-      : " Envie uma mensagem para iniciar.",
-    " Quando as dependencias forem instaladas, esta rota pode delegar para o Vercel AI SDK e transmitir tokens reais.",
-  ].join("");
+  const client = providerMap[provider];
+  if (!client) {
+    return Response.json(
+      { error: `Provedor "${provider}" não configurado no servidor.` },
+      { status: 400 },
+    );
+  }
 
-  const words = text.split(" ");
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      for (const word of words) {
-        controller.enqueue(encoder.encode(`${word} `));
-        await new Promise((resolve) => setTimeout(resolve, 18));
-      }
-      controller.close();
-    },
+  const result = streamText({
+    model: client(model),
+    messages,
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-    },
-  });
+  return result.toTextStreamResponse();
 }

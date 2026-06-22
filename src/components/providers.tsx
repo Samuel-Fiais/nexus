@@ -1,16 +1,10 @@
-"use client";
-
-import { useEffect } from "react";
+import { Toaster } from "@/components/ui/sonner";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-  }, []);
-
   return (
     <>
       {children}
-      <div id="toaster" aria-live="polite" className="sr-only" />
+      <Toaster />
     </>
   );
 }

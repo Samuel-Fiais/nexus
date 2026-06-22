@@ -7,76 +7,91 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/components/ui/sonner";
 
 const STORAGE_KEY = "nexus.providerKeys";
 
 export function SettingsForm() {
   const [keys, setKeys] = useState<Partial<Record<ProviderId, string>>>(() => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-
-    const stored = window.sessionStorage.getItem(STORAGE_KEY);
-    return stored ? (JSON.parse(stored) as Partial<Record<ProviderId, string>>) : {};
+    if (typeof window === "undefined") return {};
+    const stored = sessionStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : {};
   });
-  const [saved, setSaved] = useState(false);
+  const [showKeys, setShowKeys] = useState<Partial<Record<ProviderId, boolean>>>({});
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1800);
+    toast.success("Chaves salvas na sessão.");
+  }
+
+  function toggleShow(providerId: ProviderId) {
+    setShowKeys((prev) => ({ ...prev, [providerId]: !prev[providerId] }));
   }
 
   return (
-    <main className="min-h-screen p-4 md:p-8">
+    <main className="min-h-screen bg-white p-4 md:p-8">
       <div className="mx-auto max-w-3xl">
-        <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="mb-8 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">Configuracoes</h1>
-            <p className="text-sm text-muted-foreground">Chaves guardadas apenas em sessionStorage.</p>
+            <h1 className="text-2xl font-semibold text-foreground">Configurações</h1>
+            <p className="text-sm text-muted-foreground">
+              Chaves guardadas apenas na sessão atual (sessionStorage).
+            </p>
           </div>
-          <Button type="button" variant="secondary" onClick={() => (window.location.href = "/")}>
-            Voltar
-          </Button>
+          <Link
+            href="/"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-border bg-transparent px-4 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            Voltar ao chat
+          </Link>
         </div>
 
         <form className="flex flex-col gap-4" onSubmit={submit}>
           {AVAILABLE_PROVIDERS.map((provider) => (
-            <Card key={provider.id}>
+            <Card key={provider.id} className="border-slate-200">
               <CardHeader className="flex-row items-start justify-between">
                 <div>
-                  <CardTitle>{provider.name}</CardTitle>
+                  <CardTitle className="text-foreground">{provider.name}</CardTitle>
                   <CardDescription>
                     {provider.id === "custom"
-                      ? "Provider OpenAI-compatible configurado por sessao."
+                      ? "Provedor compatível com OpenAI, configurado por sessão."
                       : "Chave usada para chamadas ao provedor selecionado."}
                   </CardDescription>
                 </div>
-                <Badge>{keys[provider.id] || !provider.requiresKey ? "configurado" : "pendente"}</Badge>
+                <Badge className={keys[provider.id] || !provider.requiresKey ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}>
+                  {keys[provider.id] || !provider.requiresKey ? "Configurado" : "Pendente"}
+                </Badge>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
-                <Input
-                  type="password"
-                  value={keys[provider.id] ?? ""}
-                  onChange={(event) =>
-                    setKeys((current) => ({ ...current, [provider.id]: event.target.value }))
-                  }
-                  placeholder={provider.requiresKey ? "API key" : "API key opcional"}
-                />
-                {provider.id === "custom" ? <Input placeholder="Base URL (ex.: http://localhost:11434/v1)" /> : null}
+                <div className="relative">
+                  <Input
+                    type={showKeys[provider.id] ? "text" : "password"}
+                    value={keys[provider.id] ?? ""}
+                    onChange={(e) => setKeys((prev) => ({ ...prev, [provider.id]: e.target.value }))}
+                    placeholder={provider.requiresKey ? "API key" : "API key (opcional)"}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleShow(provider.id)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground hover:text-foreground"
+                    tabIndex={-1}
+                  >
+                    {showKeys[provider.id] ? "🙈" : "👁"}
+                  </button>
+                </div>
+                {provider.id === "custom" && (
+                  <Input placeholder="Base URL (ex.: http://localhost:11434/v1)" />
+                )}
               </CardContent>
             </Card>
           ))}
 
-          <div className="flex items-center justify-between">
-            <Link className="text-sm text-muted-foreground hover:text-foreground" href="/">
-              Chat
-            </Link>
-            <div className="flex items-center gap-3">
-              {saved ? <span className="text-sm text-muted-foreground">Salvo na sessao</span> : null}
-              <Button type="submit">Salvar</Button>
-            </div>
+          <div className="flex items-center justify-end gap-3">
+            <Button type="submit" className="px-6">
+              Salvar
+            </Button>
           </div>
         </form>
       </div>
