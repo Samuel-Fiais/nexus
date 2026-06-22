@@ -4,18 +4,19 @@ import { google } from '@ai-sdk/google';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { streamText } from 'ai';
 
-const providerMap: Record<string, any> = {
-  openai,
-  anthropic,
-  google,
+const providerMap: Record<string, (modelId: string) => ReturnType<typeof openai>> = {
+  openai: (modelId) => openai(modelId),
+  anthropic: (modelId) => anthropic(modelId) as ReturnType<typeof openai>,
+  google: (modelId) => google(modelId) as ReturnType<typeof openai>,
 };
 
 export async function POST(request: Request) {
-  const { messages, provider, model, baseUrl } = await request.json() as {
+  const { messages, provider, model, baseUrl, apiKey } = await request.json() as {
     messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
     provider: string;
     model: string;
     baseUrl?: string;
+    apiKey?: string;
   };
 
   // Providers nativos (OpenAI, Anthropic, Google)
@@ -40,6 +41,7 @@ export async function POST(request: Request) {
     const compatible = createOpenAICompatible({
       name: provider,
       baseURL: baseUrl,
+      ...(apiKey ? { apiKey } : {}),
     });
 
     const result = streamText({

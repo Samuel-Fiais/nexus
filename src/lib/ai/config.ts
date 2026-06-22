@@ -7,6 +7,7 @@ export interface ProviderConfig {
   requiresKey: boolean;
   requiresBaseUrl?: boolean;
   baseUrlPlaceholder?: string;
+  modelIsEditable?: boolean;
 }
 
 export const AVAILABLE_PROVIDERS: ProviderConfig[] = [
@@ -41,27 +42,19 @@ export const AVAILABLE_PROVIDERS: ProviderConfig[] = [
   {
     id: "ollama",
     name: "Ollama",
-    models: [
-      { id: "llama3.2", name: "Llama 3.2" },
-      { id: "llama3.1", name: "Llama 3.1" },
-      { id: "mistral", name: "Mistral" },
-      { id: "codellama", name: "CodeLlama" },
-      { id: "phi4", name: "Phi-4" },
-      { id: "deepseek-r1", name: "DeepSeek R1" },
-      { id: "qwen2.5", name: "Qwen 2.5" },
-      { id: "gemma2", name: "Gemma 2" },
-      { id: "custom-model", name: "Outro modelo" },
-    ],
-    requiresKey: false,
+    models: [{ id: "", name: "Modelo personalizado" }],
+    requiresKey: true,
     requiresBaseUrl: true,
     baseUrlPlaceholder: "http://localhost:11434/v1",
+    modelIsEditable: true,
   },
   {
     id: "custom",
     name: "Custom (OpenAI-compatible)",
-    models: [{ id: "custom-model", name: "Custom Model" }],
-    requiresKey: false,
+    models: [{ id: "", name: "Modelo personalizado" }],
+    requiresKey: true,
     requiresBaseUrl: true,
     baseUrlPlaceholder: "http://localhost:11434/v1",
+    modelIsEditable: true,
   },
 ];

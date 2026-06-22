@@ -57,7 +57,9 @@ export function SettingsForm() {
 
         <form className="flex flex-col gap-4" onSubmit={submit}>
           {AVAILABLE_PROVIDERS.map((provider) => {
-            const isConfigured = !!(keys[provider.id] || !provider.requiresKey) && (!provider.requiresBaseUrl || urls[provider.id]);
+            const keyFilled = !!keys[provider.id];
+            const urlFilled = !provider.requiresBaseUrl || !!urls[provider.id];
+            const isConfigured = keyFilled && urlFilled;
 
             return (
               <Card key={provider.id}>
@@ -66,9 +68,9 @@ export function SettingsForm() {
                     <CardTitle>{provider.name}</CardTitle>
                     <CardDescription>
                       {provider.id === "ollama"
-                        ? "Modelos via Ollama Cloud. Informe a URL do servidor."
+                        ? "Ollama Cloud PRO precisa de API key e URL do servidor."
                         : provider.id === "custom"
-                          ? "Provedor compatível com OpenAI. Informe a URL base."
+                          ? "Provedor compatível com OpenAI. Informe URL base e API key."
                           : "Chave usada para chamadas ao provedor selecionado."}
                     </CardDescription>
                   </div>
