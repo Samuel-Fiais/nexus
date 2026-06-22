@@ -46,8 +46,15 @@ function getProviderKeys(): Partial<Record<ProviderId, string>> {
 
 function getConfiguredProviders(): ProviderId[] {
   const keys = getProviderKeys();
+  const urls = typeof window !== "undefined" && sessionStorage.getItem("nexus.providerUrls")
+    ? JSON.parse(sessionStorage.getItem("nexus.providerUrls")!)
+    : {};
   return AVAILABLE_PROVIDERS
-    .filter((p) => p.id === "custom" || keys[p.id])
+    .filter((p) => {
+      if (p.id === "custom") return true;
+      if (p.requiresBaseUrl) return urls[p.id];
+      return keys[p.id];
+    })
     .map((p) => p.id);
 }
 
@@ -155,6 +162,11 @@ export function ChatWorkspace() {
           messages: [...activeConversation.messages, userMessage],
           provider,
           model,
+          baseUrl: (provider === 'ollama' || provider === 'custom')
+            ? (sessionStorage.getItem('nexus.providerUrls')
+              ? JSON.parse(sessionStorage.getItem('nexus.providerUrls')!)[provider]
+              : undefined)
+            : undefined,
         }),
       });
 

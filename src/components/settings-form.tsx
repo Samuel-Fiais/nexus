@@ -9,19 +9,26 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/sonner";
 
-const STORAGE_KEY = "nexus.providerKeys";
+const KEY_STORAGE = "nexus.providerKeys";
+const URL_STORAGE = "nexus.providerUrls";
 
 export function SettingsForm() {
   const [keys, setKeys] = useState<Partial<Record<ProviderId, string>>>(() => {
     if (typeof window === "undefined") return {};
-    const stored = sessionStorage.getItem(STORAGE_KEY);
+    const stored = sessionStorage.getItem(KEY_STORAGE);
+    return stored ? JSON.parse(stored) : {};
+  });
+  const [urls, setUrls] = useState<Partial<Record<ProviderId, string>>>(() => {
+    if (typeof window === "undefined") return {};
+    const stored = sessionStorage.getItem(URL_STORAGE);
     return stored ? JSON.parse(stored) : {};
   });
   const [showKeys, setShowKeys] = useState<Partial<Record<ProviderId, boolean>>>({});
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
+    sessionStorage.setItem(KEY_STORAGE, JSON.stringify(keys));
+    sessionStorage.setItem(URL_STORAGE, JSON.stringify(urls));
     toast.success("Chaves salvas na sessão.");
   }
 
@@ -48,45 +55,57 @@ export function SettingsForm() {
         </div>
 
         <form className="flex flex-col gap-4" onSubmit={submit}>
-          {AVAILABLE_PROVIDERS.map((provider) => (
-            <Card key={provider.id} className="border-slate-200">
-              <CardHeader className="flex-row items-start justify-between">
-                <div>
-                  <CardTitle className="text-foreground">{provider.name}</CardTitle>
-                  <CardDescription>
-                    {provider.id === "custom"
-                      ? "Provedor compatível com OpenAI, configurado por sessão."
-                      : "Chave usada para chamadas ao provedor selecionado."}
-                  </CardDescription>
-                </div>
-                <Badge className={keys[provider.id] || !provider.requiresKey ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}>
-                  {keys[provider.id] || !provider.requiresKey ? "Configurado" : "Pendente"}
-                </Badge>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <div className="relative">
-                  <Input
-                    type={showKeys[provider.id] ? "text" : "password"}
-                    value={keys[provider.id] ?? ""}
-                    onChange={(e) => setKeys((prev) => ({ ...prev, [provider.id]: e.target.value }))}
-                    placeholder={provider.requiresKey ? "API key" : "API key (opcional)"}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => toggleShow(provider.id)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground hover:text-foreground"
-                    tabIndex={-1}
-                  >
-                    {showKeys[provider.id] ? "🙈" : "👁"}
-                  </button>
-                </div>
-                {provider.id === "custom" && (
-                  <Input placeholder="Base URL (ex.: http://localhost:11434/v1)" />
-                )}
-              </CardContent>
-            </Card>
-          ))}
+          {AVAILABLE_PROVIDERS.map((provider) => {
+            const isConfigured = !!(keys[provider.id] || !provider.requiresKey) && (!provider.requiresBaseUrl || urls[provider.id]);
+
+            return (
+              <Card key={provider.id} className="border-slate-200">
+                <CardHeader className="flex-row items-start justify-between">
+                  <div>
+                    <CardTitle className="text-foreground">{provider.name}</CardTitle>
+                    <CardDescription>
+                      {provider.id === "ollama"
+                        ? "Modelos locais via Ollama. Informe a URL do servidor."
+                        : provider.id === "custom"
+                          ? "Provedor compatível com OpenAI. Informe a URL base."
+                          : "Chave usada para chamadas ao provedor selecionado."}
+                    </CardDescription>
+                  </div>
+                  <Badge className={isConfigured ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}>
+                    {isConfigured ? "Configurado" : "Pendente"}
+                  </Badge>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  {provider.requiresKey && (
+                    <div className="relative">
+                      <Input
+                        type={showKeys[provider.id] ? "text" : "password"}
+                        value={keys[provider.id] ?? ""}
+                        onChange={(e) => setKeys((prev) => ({ ...prev, [provider.id]: e.target.value }))}
+                        placeholder="API key"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => toggleShow(provider.id)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground hover:text-foreground"
+                        tabIndex={-1}
+                      >
+                        {showKeys[provider.id] ? "🙈" : "👁"}
+                      </button>
+                    </div>
+                  )}
+                  {provider.requiresBaseUrl && (
+                    <Input
+                      value={urls[provider.id] ?? ""}
+                      onChange={(e) => setUrls((prev) => ({ ...prev, [provider.id]: e.target.value }))}
+                      placeholder={provider.baseUrlPlaceholder ?? "http://localhost:11434/v1"}
+                    />
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
 
           <div className="flex items-center justify-end gap-3">
             <Button type="submit" className="px-6">
