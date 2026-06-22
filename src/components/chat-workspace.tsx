@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 type Message = {
@@ -345,7 +345,7 @@ export function ChatWorkspace() {
             </Select>
 
             {activeProvider && (
-              <Select value={model} onValueChange={setModel}>
+              <Select value={model} onValueChange={(v: string | null) => v && setModel(v)}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Modelo" />
                 </SelectTrigger>
