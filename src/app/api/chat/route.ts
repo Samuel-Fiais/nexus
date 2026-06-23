@@ -1,58 +1,137 @@
-import { openai } from '@ai-sdk/openai';
-import { anthropic } from '@ai-sdk/anthropic';
-import { google } from '@ai-sdk/google';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { streamText } from 'ai';
+import { requireUser } from "@/lib/auth";
+import { jsonError, readJson } from "@/lib/api";
+import {
+  createConversation,
+  getConversation,
+  getTenant,
+  insertMessage,
+  listBehaviorMemories,
+  listMessages,
+  listOrgMemories,
+  listUserMemories,
+  normalizeLiveLinkUrl,
+  resolveProviderForUser,
+  updateConversationAfterMessage,
+  type OrgMemoryRecord,
+} from "@/lib/db";
+import { createChatStream, type ChatLiveLink, type ChatOrgMemory, type CoreMessage } from "@/lib/ai/chat";
+import { extractUrlsFromTexts, resolveLiveLinksForConversation, type ResolvedLiveLink } from "@/lib/ai/live-links";
 
-const providerMap: Record<string, (modelId: string) => ReturnType<typeof openai>> = {
-  openai: (modelId) => openai(modelId),
-  anthropic: (modelId) => anthropic(modelId) as ReturnType<typeof openai>,
-  google: (modelId) => google(modelId) as ReturnType<typeof openai>,
+export const runtime = "nodejs";
+
+type ChatBody = {
+  conversationId?: string;
+  content?: string;
+  providerId?: string | null;
 };
 
-export async function POST(request: Request) {
-  const { messages, provider, model, baseUrl, apiKey } = await request.json() as {
-    messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
-    provider: string;
-    model: string;
-    baseUrl?: string;
-    apiKey?: string;
-  };
+function withLiveLinkMemories(memories: OrgMemoryRecord[], resolvedLinks: Map<string, ResolvedLiveLink>): ChatOrgMemory[] {
+  return memories.map((memory) => {
+    const normalizedUrl = memory.url ? normalizeLiveLinkUrl(memory.url) : null;
+    if (memory.sourceType !== "link" || !normalizedUrl) return memory;
 
-  // Providers nativos (OpenAI, Anthropic, Google)
-  const client = providerMap[provider];
-  if (client) {
-    const result = streamText({
-      model: client(model),
-      messages,
-    });
-    return result.toTextStreamResponse();
-  }
+    const live = resolvedLinks.get(normalizedUrl);
+    if (live?.status === "success" && live.content) return { ...memory, liveContent: live.content };
+    if (live?.status === "failed") return { ...memory, liveFetchFailed: true };
+    return memory;
+  });
+}
 
-  // Providers OpenAI-compatible (Ollama, Custom)
-  if (provider === 'ollama' || provider === 'custom') {
-    if (!baseUrl) {
-      return Response.json(
-        { error: 'URL base não configurada para este provedor.' },
-        { status: 400 },
-      );
-    }
+function collectLiveLinkTexts(
+  content: string,
+  previousMessages: { content: string }[],
+  orgMemories: OrgMemoryRecord[],
+  userMemories: { content: string; summary: string; tags: string }[],
+  behaviorMemories: { content: string; summary: string; tags: string }[],
+) {
+  return [
+    content,
+    ...previousMessages.map((message) => message.content),
+    ...orgMemories.flatMap((memory) => [
+      memory.url ?? "",
+      memory.title,
+      memory.tags,
+      memory.summary,
+      memory.content,
+    ]),
+    ...userMemories.flatMap((memory) => [memory.content, memory.summary, memory.tags]),
+    ...behaviorMemories.flatMap((memory) => [memory.content, memory.summary, memory.tags]),
+  ];
+}
 
-    const compatible = createOpenAICompatible({
-      name: provider,
-      baseURL: baseUrl,
-      ...(apiKey ? { apiKey } : {}),
-    });
+function liveLinksForPrompt(resolvedLinks: Map<string, ResolvedLiveLink>): ChatLiveLink[] {
+  return [...resolvedLinks.values()].map((link) => ({
+    url: link.url,
+    content: link.content,
+    status: link.status,
+    error: link.error,
+  }));
+}
 
-    const result = streamText({
-      model: compatible(model),
-      messages,
-    });
-    return result.toTextStreamResponse();
-  }
-
-  return Response.json(
-    { error: `Provedor "${provider}" não reconhecido.` },
-    { status: 400 },
+function relevantOrgMemories(memories: ChatOrgMemory[], query: string) {
+  const terms = new Set(
+    query
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+      .split(/\s+/)
+      .filter((term) => term.length > 3),
   );
+
+  return memories
+    .map((memory) => {
+      const sourceText = memory.sourceType === "link" && memory.liveContent ? memory.liveContent : `${memory.summary} ${memory.content}`;
+      const haystack = `${memory.title} ${memory.tags} ${sourceText}`.toLowerCase();
+      const score = Array.from(terms).reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
+      return { memory, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8)
+    .map((item) => item.memory);
+}
+
+export async function POST(request: Request) {
+  const user = await requireUser();
+  const body = await readJson<ChatBody>(request);
+  const content = body?.content?.trim();
+  if (!content) return jsonError("Informe uma mensagem.");
+
+  const tenant = getTenant(user.tenantId);
+  if (!tenant) return jsonError("Tenant não encontrado.", 404);
+
+  let conversationId = body?.conversationId;
+  if (!conversationId || !getConversation(user, conversationId)) {
+    conversationId = createConversation(user);
+  }
+
+  const previousMessages = listMessages(user, conversationId);
+  const title = previousMessages.length === 0 ? content.slice(0, 60) : undefined;
+  insertMessage(conversationId, "user", content);
+  updateConversationAfterMessage(conversationId, title);
+
+  const provider = resolveProviderForUser(user, body?.providerId ?? null);
+  const userMemories = listUserMemories(user, user.id);
+  const behaviorMemories = listBehaviorMemories(user.tenantId);
+  const allOrgMemories = listOrgMemories(user.tenantId);
+  const liveLinkUrls = extractUrlsFromTexts(collectLiveLinkTexts(content, previousMessages, allOrgMemories, userMemories, behaviorMemories));
+  const resolvedLinks = await resolveLiveLinksForConversation(conversationId, liveLinkUrls);
+  const orgMemories = relevantOrgMemories(withLiveLinkMemories(allOrgMemories, resolvedLinks), content);
+  const messages: CoreMessage[] = [
+    ...previousMessages
+      .filter((message) => message.role !== "system")
+      .map((message) => ({ role: message.role as "user" | "assistant", content: message.content })),
+    { role: "user", content },
+  ];
+
+  const response = createChatStream(
+    messages,
+    { tenant, provider, user, orgMemories, userMemories, behaviorMemories, liveLinks: liveLinksForPrompt(resolvedLinks) },
+    (assistantText) => {
+      insertMessage(conversationId, "assistant", assistantText);
+      updateConversationAfterMessage(conversationId);
+    },
+  );
+  response.headers.set("x-conversation-id", conversationId);
+  response.headers.set("x-provider-label", encodeURIComponent(provider ? `${provider.modelAlias || provider.name} / ${provider.model}` : "Sem modelo configurado"));
+  return response;
 }

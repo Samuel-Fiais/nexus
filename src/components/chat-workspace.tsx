@@ -1,333 +1,256 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useMemo, useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Menu, MessageSquare, Moon, Plus, Settings, Sun, X, LogOut } from "lucide-react";
-import { AVAILABLE_PROVIDERS, type ProviderId } from "@/lib/ai/config";
+import { LogOut, Menu, MessageSquare, Moon, Plus, SendHorizontal, Settings, Sun, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-type Message = {
+type User = {
   id: string;
-  role: "user" | "assistant";
-  content: string;
+  email: string;
+  name: string;
+  role: "admin" | "user";
+};
+
+type Provider = {
+  id: string;
+  name: string;
+  kind: "openai" | "anthropic" | "google" | "ollama" | "custom";
+  model: string;
+  modelAlias: string | null;
+  enabled: boolean;
 };
 
 type Conversation = {
   id: string;
   title: string;
-  messages: Message[];
-  updatedAt: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
-const CONV_STORAGE = "nexus.conversations";
-const KEY_STORAGE = "nexus.providerKeys";
-const URL_STORAGE = "nexus.providerUrls";
+type Message = {
+  id: string;
+  conversationId: string;
+  role: "system" | "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
 
-function createConversation(): Conversation {
-  return {
-    id: crypto.randomUUID(),
-    title: "Nova conversa",
-    messages: [],
-    updatedAt: Date.now(),
-  };
+type ChatWorkspaceProps = {
+  user: User;
+  tenantName: string;
+  providers: Provider[];
+  resolvedProvider: Provider | null;
+  conversations: Conversation[];
+  initialConversationId: string;
+  initialMessages: Message[];
+};
+
+function modelLabel(provider: Provider | null) {
+  if (!provider) return "Sem modelo configurado";
+  return `${provider.modelAlias || provider.name} / ${provider.model || "modelo não definido"}`;
 }
 
-function getProviderKeys(): Partial<Record<ProviderId, string>> {
-  if (typeof window === "undefined") return {};
-  const stored = sessionStorage.getItem(KEY_STORAGE);
-  return stored ? JSON.parse(stored) : {};
-}
-
-function getProviderUrls(): Partial<Record<ProviderId, string>> {
-  if (typeof window === "undefined") return {};
-  const stored = sessionStorage.getItem(URL_STORAGE);
-  return stored ? JSON.parse(stored) : {};
-}
-
-function getConfiguredProviders(): ProviderId[] {
-  const keys = getProviderKeys();
-  const urls = getProviderUrls();
-  return AVAILABLE_PROVIDERS.filter((p) => {
-    const keyOk = !!keys[p.id];
-    const urlOk = !p.requiresBaseUrl || !!urls[p.id];
-    return keyOk && urlOk;
-  }).map((p) => p.id);
-}
-
-function getInitialModel(providerId: ProviderId): string {
-  const cfg = AVAILABLE_PROVIDERS.find((p) => p.id === providerId);
-  if (cfg?.modelIsEditable) return "";
-  return cfg?.models[0]?.id ?? "";
-}
-
-export function ChatWorkspace() {
+export function ChatWorkspace({
+  user,
+  tenantName,
+  providers,
+  resolvedProvider,
+  conversations: initialConversations,
+  initialConversationId,
+  initialMessages,
+}: ChatWorkspaceProps) {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [conversations, setConversations] = useState<Conversation[]>(() => {
-    if (typeof window === "undefined") return [];
-    const stored = sessionStorage.getItem(CONV_STORAGE);
-    const parsed = stored ? (JSON.parse(stored) as Conversation[]) : [];
-    return parsed.length ? parsed : [createConversation()];
-  });
-  const [activeId, setActiveId] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    const stored = sessionStorage.getItem(CONV_STORAGE);
-    const parsed = stored ? (JSON.parse(stored) as Conversation[]) : [];
-    const convs = parsed.length ? parsed : [createConversation()];
-    return convs[0].id;
-  });
-  const [provider, setProvider] = useState<ProviderId | "">(() => {
-    if (typeof window === "undefined") return "";
-    const configured = getConfiguredProviders();
-    return configured.length > 0 ? configured[0] : "";
-  });
-  const [model, setModel] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    const configured = getConfiguredProviders();
-    return configured.length > 0 ? getInitialModel(configured[0]) : "";
-  });
+  const [conversations, setConversations] = useState(initialConversations);
+  const [activeId, setActiveId] = useState(initialConversationId);
+  const [messages, setMessages] = useState(initialMessages);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState(resolvedProvider?.id ?? providers.find((provider) => provider.enabled)?.id ?? "");
   const viewportRef = useRef<HTMLDivElement>(null);
 
-  // Verificar login
-  useEffect(() => {
-    setMounted(true);
-    if (!sessionStorage.getItem("nexus.user")) {
-      router.replace("/login");
-    }
-  }, [router]);
-
-  // Persistir conversas
-  useEffect(() => {
-    if (conversations.length) {
-      sessionStorage.setItem(CONV_STORAGE, JSON.stringify(conversations));
-    }
-  }, [conversations]);
-
-  const activeConversation = conversations.find((c) => c.id === activeId);
-  const configuredProviders = getConfiguredProviders();
-  const activeProvider = AVAILABLE_PROVIDERS.find((p) => p.id === provider);
+  const activeConversation = conversations.find((conversation) => conversation.id === activeId) ?? null;
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? resolvedProvider;
+  const providerInfo = user.role === "admin" ? modelLabel(selectedProvider) : modelLabel(resolvedProvider);
+  const visibleMessages = messages.filter((message) => message.role !== "system");
 
   const sortedConversations = useMemo(
-    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    () => [...conversations].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
     [conversations],
   );
 
-  // Scroll automático
-  const messageCount = activeConversation?.messages.length ?? 0;
   useEffect(() => {
     viewportRef.current?.scrollTo({
       top: viewportRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messageCount, isStreaming]);
+  }, [messages.length, isStreaming]);
 
-  function resolveBaseUrlAndKey(selectedProvider: ProviderId) {
-    const urls = getProviderUrls();
-    const keys = getProviderKeys();
-    const baseUrl = urls[selectedProvider];
-    const apiKey = keys[selectedProvider];
-    return { baseUrl, apiKey };
+  async function loadConversation(id: string) {
+    const response = await fetch(`/api/conversations/${id}`);
+    if (!response.ok) {
+      toast.error("Não foi possível carregar a conversa.");
+      return;
+    }
+    const data = (await response.json()) as { messages: Message[] };
+    setActiveId(id);
+    setMessages(data.messages);
+    setSheetOpen(false);
   }
 
-  function isProviderReady(selectedProvider: ProviderId) {
-    const cfg = AVAILABLE_PROVIDERS.find((p) => p.id === selectedProvider);
-    if (!cfg) return false;
-    const keys = getProviderKeys();
-    const urls = getProviderUrls();
-    const keyOk = !cfg.requiresKey || !!keys[selectedProvider];
-    const urlOk = !cfg.requiresBaseUrl || !!urls[selectedProvider];
-    return keyOk && urlOk;
+  async function newConversation() {
+    const response = await fetch("/api/conversations", { method: "POST" });
+    if (!response.ok) {
+      toast.error("Não foi possível criar a conversa.");
+      return;
+    }
+    const data = (await response.json()) as { id: string };
+    const now = new Date().toISOString();
+    const conversation = { id: data.id, title: "Nova conversa", createdAt: now, updatedAt: now };
+    setConversations((items) => [conversation, ...items]);
+    setActiveId(data.id);
+    setMessages([]);
+    setSheetOpen(false);
+  }
+
+  async function deleteActiveConversation() {
+    if (!activeId) return;
+    const response = await fetch(`/api/conversations/${activeId}`, { method: "DELETE" });
+    if (!response.ok) {
+      toast.error("Não foi possível excluir a conversa.");
+      return;
+    }
+    const remaining = conversations.filter((conversation) => conversation.id !== activeId);
+    setConversations(remaining);
+    setActiveId(remaining[0]?.id ?? "");
+    if (remaining[0]) {
+      await loadConversation(remaining[0].id);
+    } else {
+      setMessages([]);
+    }
+  }
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.replace("/login");
+    router.refresh();
   }
 
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const content = input.trim();
-    if (!content || !activeConversation || isStreaming) return;
+    if (!content || isStreaming) return;
 
-    if (!provider) {
-      toast.error("Nenhum provedor selecionado. Configure uma chave em Configurações.");
-      return;
-    }
-
-    if (!isProviderReady(provider)) {
-      toast.error(`Configure a chave e URL do provedor ${activeProvider?.name ?? provider} em Configurações.`);
-      return;
-    }
-
-    if (activeProvider?.modelIsEditable && !model.trim()) {
-      toast.error("Informe o nome do modelo para este provedor.");
+    if (user.role === "admin" && !selectedProviderId) {
+      toast.error("Selecione um provedor/modelo.");
       return;
     }
 
     setInput("");
     setIsStreaming(true);
 
-    const userMessage: Message = { id: crypto.randomUUID(), role: "user", content };
+    const localUserMessage: Message = {
+      id: crypto.randomUUID(),
+      conversationId: activeId,
+      role: "user",
+      content,
+      createdAt: new Date().toISOString(),
+    };
     const assistantId = crypto.randomUUID();
-    const title = activeConversation.messages.length === 0 ? content.slice(0, 48) : activeConversation.title;
-
-    setConversations((items) =>
-      items.map((item) =>
-        item.id === activeId
-          ? {
-              ...item,
-              title,
-              updatedAt: Date.now(),
-              messages: [...item.messages, userMessage, { id: assistantId, role: "assistant", content: "" }],
-            }
-          : item,
-      ),
-    );
-
-    const { baseUrl, apiKey } = resolveBaseUrlAndKey(provider);
+    setMessages((items) => [
+      ...items,
+      localUserMessage,
+      { ...localUserMessage, id: assistantId, role: "assistant", content: "" },
+    ]);
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [...activeConversation.messages, userMessage],
-          provider,
-          model,
-          baseUrl,
-          apiKey,
+          conversationId: activeId || undefined,
+          content,
+          providerId: user.role === "admin" ? selectedProviderId : undefined,
         }),
       });
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: "Erro desconhecido" }));
-        throw new Error(err.error || `Erro ${response.status}`);
+        const err = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(err?.error || `Erro ${response.status}`);
+      }
+
+      const conversationId = response.headers.get("x-conversation-id") || activeId;
+      if (conversationId && conversationId !== activeId) {
+        const now = new Date().toISOString();
+        setActiveId(conversationId);
+        setConversations((items) => [{ id: conversationId, title: content.slice(0, 60), createdAt: now, updatedAt: now }, ...items]);
+      } else if (activeId) {
+        setConversations((items) =>
+          items.map((conversation) =>
+            conversation.id === activeId
+              ? { ...conversation, title: conversation.title === "Nova conversa" ? content.slice(0, 60) : conversation.title, updatedAt: new Date().toISOString() }
+              : conversation,
+          ),
+        );
       }
 
       const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
       if (!reader) throw new Error("Resposta vazia do servidor.");
+      const decoder = new TextDecoder();
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value);
-        setConversations((items) =>
-          items.map((item) =>
-            item.id === activeId
-              ? {
-                  ...item,
-                  updatedAt: Date.now(),
-                  messages: item.messages.map((msg) =>
-                    msg.id === assistantId ? { ...msg, content: msg.content + chunk } : msg,
-                  ),
-                }
-              : item,
-          ),
+        setMessages((items) =>
+          items.map((message) => (message.id === assistantId ? { ...message, content: message.content + chunk } : message)),
         );
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao enviar mensagem.");
-      setConversations((items) =>
-        items.map((item) =>
-          item.id === activeId
-            ? { ...item, messages: item.messages.filter((m) => m.id !== assistantId) }
-            : item,
-        ),
-      );
+      setMessages((items) => items.filter((message) => message.id !== assistantId));
     } finally {
       setIsStreaming(false);
     }
   }
 
-  function newConversation() {
-    const next = createConversation();
-    setConversations((items) => [next, ...items]);
-    setActiveId(next.id);
-    setSheetOpen(false);
-  }
-
-  function selectConversation(id: string) {
-    setActiveId(id);
-    setSheetOpen(false);
-  }
-
-  function handleLogout() {
-    sessionStorage.removeItem("nexus.user");
-    router.replace("/login");
-  }
-
-  if (!mounted) return null;
-
-  // Tela de boas-vindas se nenhum provider configurado
-  if (configuredProviders.length === 0) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-8">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-2xl font-bold text-primary-foreground shadow-lg">
-          N
-        </div>
-        <div className="max-w-md text-center">
-          <h1 className="text-2xl font-semibold text-foreground">Bem-vindo ao Nexus</h1>
-          <p className="mt-2 text-muted-foreground">
-            Nenhum provedor configurado. Acesse Configurações para adicionar suas chaves de API.
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <Link
-            href="/settings"
-            className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
-          >
-            Configurações
-          </Link>
-          <Button variant="outline" onClick={handleLogout}>
-            Sair
-          </Button>
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <main className="flex min-h-screen flex-col bg-background">
+    <main className="flex min-h-screen flex-col bg-background text-foreground">
       <section className="flex min-h-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-3 border-b border-border bg-background p-4">
-          <div className="flex items-center gap-2">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 bg-background/90 px-4 py-3 backdrop-blur md:px-6">
+          <div className="flex min-w-0 items-center gap-2">
             <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
               <SheetTrigger>
-                <Button type="button" variant="ghost" size="icon" aria-label="Abrir menu">
+                <Button type="button" variant="ghost" size="icon" aria-label="Abrir menu" className="text-muted-foreground">
                   <Menu className="size-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="gap-0 p-0">
-                <div className="flex flex-col gap-4 p-4">
+              <SheetContent side="left" className="gap-0 border-border/70 bg-sidebar p-0">
+                <div className="flex h-full flex-col gap-5 p-5">
                   <SheetHeader>
                     <div className="flex items-center justify-between">
                       <div>
-                        <SheetTitle>Nexus</SheetTitle>
-                        <SheetDescription>Chat multi-provedor</SheetDescription>
+                        <SheetTitle className="font-heading text-2xl font-normal">Nexus</SheetTitle>
+                        <SheetDescription className="text-muted-foreground">{tenantName}</SheetDescription>
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Fechar menu"
-                        onClick={() => setSheetOpen(false)}
-                      >
+                      <Button type="button" variant="ghost" size="icon" aria-label="Fechar menu" onClick={() => setSheetOpen(false)}>
                         <X className="size-5" />
                       </Button>
                     </div>
                   </SheetHeader>
 
-                  <Button type="button" className="w-full" onClick={newConversation}>
+                  <Button type="button" className="h-10 w-full shadow-sm" onClick={newConversation}>
                     <Plus className="size-4" />
                     Nova conversa
                   </Button>
@@ -336,7 +259,7 @@ export function ChatWorkspace() {
                     <Link
                       href="/settings"
                       onClick={() => setSheetOpen(false)}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      className="flex items-center gap-2 rounded-lg px-3 py-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     >
                       <Settings className="size-4" />
                       Configurações
@@ -345,9 +268,9 @@ export function ChatWorkspace() {
                       type="button"
                       onClick={() => {
                         setSheetOpen(false);
-                        handleLogout();
+                        void handleLogout();
                       }}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     >
                       <LogOut className="size-4" />
                       Sair
@@ -356,23 +279,21 @@ export function ChatWorkspace() {
 
                   <Separator />
 
-                  <div className="flex flex-1 flex-col gap-1 overflow-y-auto">
-                    <p className="px-3 text-xs font-medium text-muted-foreground">Conversas</p>
+                  <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+                    <p className="px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Conversas</p>
                     {sortedConversations.map((conversation) => (
                       <button
                         key={conversation.id}
                         type="button"
-                        onClick={() => selectConversation(conversation.id)}
+                        onClick={() => void loadConversation(conversation.id)}
                         className={cn(
-                          "rounded-md px-3 py-2 text-left text-sm transition-colors",
-                          conversation.id === activeId
-                            ? "bg-accent text-foreground"
-                            : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                          "rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
+                          conversation.id === activeId ? "bg-accent text-foreground shadow-sm" : "text-muted-foreground hover:bg-accent hover:text-foreground",
                         )}
                       >
                         <span className="block truncate font-medium">{conversation.title}</span>
                         <span className="text-xs text-muted-foreground">
-                          {conversation.messages.length} mensagens
+                          {new Date(conversation.updatedAt).toLocaleString("pt-BR")}
                         </span>
                       </button>
                     ))}
@@ -382,60 +303,38 @@ export function ChatWorkspace() {
             </Sheet>
 
             <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold text-foreground">
-                {activeConversation?.title ?? "Chat"}
-              </h2>
+              <h2 className="truncate font-heading text-xl font-normal leading-tight text-foreground">{activeConversation?.title ?? "Chat"}</h2>
+              <p className="truncate text-xs text-muted-foreground">{user.name} · {providerInfo}</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex gap-2">
-              <Select
-                value={provider}
-                onValueChange={(value) => {
-                  const nextProvider = value as ProviderId;
-                  setProvider(nextProvider);
-                  setModel(getInitialModel(nextProvider));
-                }}
-              >
-                <SelectTrigger className="w-[160px]">
-                  <SelectValue placeholder="Provedor" />
+            {user.role === "admin" ? (
+              <Select value={selectedProviderId} onValueChange={(value) => setSelectedProviderId(value || "")}>
+                <SelectTrigger className="w-[220px]">
+                  <SelectValue placeholder="Provedor/modelo" />
                 </SelectTrigger>
                 <SelectContent>
-                  {AVAILABLE_PROVIDERS.filter(
-                    (p) => p.id === "custom" || configuredProviders.includes(p.id as ProviderId),
-                  ).map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
+                  {providers
+                    .filter((provider) => provider.enabled)
+                    .map((provider) => (
+                      <SelectItem key={provider.id} value={provider.id}>
+                        {modelLabel(provider)}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
+            ) : (
+              <div className="hidden max-w-[280px] truncate rounded-full border border-border/80 bg-card/70 px-3 py-1.5 text-xs text-muted-foreground shadow-sm md:block">
+                {providerInfo}
+              </div>
+            )}
 
-              {activeProvider?.modelIsEditable ? (
-                <Input
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="Nome do modelo"
-                  className="w-[200px]"
-                />
-              ) : (
-                activeProvider && (
-                  <Select value={model} onValueChange={(v: string | null) => v && setModel(v)}>
-                    <SelectTrigger className="w-[200px]">
-                      <SelectValue placeholder="Modelo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeProvider.models.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )
-              )}
-            </div>
+            {activeId ? (
+              <Button type="button" variant="ghost" size="icon" aria-label="Excluir conversa" onClick={() => void deleteActiveConversation()}>
+                <Trash2 className="size-4" />
+              </Button>
+            ) : null}
 
             <Button
               type="button"
@@ -449,27 +348,24 @@ export function ChatWorkspace() {
           </div>
         </header>
 
-        <div ref={viewportRef} className="flex-1 overflow-y-auto bg-background p-4">
-          <div className="mx-auto flex max-w-3xl flex-col gap-4">
-            {activeConversation?.messages.length ? (
-              activeConversation.messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={cn("flex", message.role === "user" ? "justify-end" : "justify-start")}
-                >
+        <div ref={viewportRef} className="flex-1 overflow-y-auto bg-background px-4 py-8 md:px-8">
+          <div className="mx-auto flex max-w-3xl flex-col gap-7">
+            {visibleMessages.length ? (
+              visibleMessages.map((message) => (
+                <div key={message.id} className={cn("flex", message.role === "user" ? "justify-end" : "justify-start")}>
                   {message.content ? (
                     <div
                       className={cn(
-                        "max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm",
+                        "whitespace-pre-wrap text-[0.95rem] leading-7",
                         message.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-foreground",
+                          ? "max-w-[82%] rounded-2xl border border-primary/10 bg-primary px-4 py-3 text-primary-foreground shadow-sm"
+                          : "max-w-full rounded-none px-1 py-1 text-foreground",
                       )}
                     >
                       {message.content}
                     </div>
                   ) : (
-                    <div className="flex max-w-[80%] items-center gap-2 rounded-2xl bg-muted px-4 py-3">
+                    <div className="flex max-w-[80%] items-center gap-2 rounded-2xl border border-border/70 bg-card px-4 py-3 shadow-sm">
                       <Skeleton className="h-4 w-4 rounded-full" />
                       <Skeleton className="h-4 w-24" />
                       <Skeleton className="h-4 w-16" />
@@ -478,32 +374,30 @@ export function ChatWorkspace() {
                 </div>
               ))
             ) : (
-              <div className="flex min-h-[50vh] items-center justify-center">
-                <div className="max-w-md text-center">
-                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-muted">
+              <div className="flex min-h-[58vh] items-center justify-center">
+                <div className="max-w-xl text-center">
+                  <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-border/70 bg-card shadow-sm">
                     <MessageSquare className="size-6 text-muted-foreground" />
                   </div>
-                  <h2 className="text-xl font-semibold text-foreground">Comece uma conversa</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Escolha um provedor e modelo acima, depois digite sua mensagem.
-                  </p>
+                  <h2 className="font-heading text-4xl font-normal leading-tight text-foreground">Comece uma conversa</h2>
+                  <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">Nexus está pronto para ler, escrever e consultar links em contexto.</p>
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        <form onSubmit={submitMessage} className="border-t border-border bg-background p-4">
-          <div className="mx-auto flex max-w-3xl gap-2">
+        <form onSubmit={submitMessage} className="border-t border-border/70 bg-background/95 px-4 py-4 backdrop-blur md:px-8">
+          <div className="mx-auto flex max-w-3xl items-center gap-2 rounded-2xl border border-border/80 bg-card p-2 shadow-sm">
             <Input
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(event) => setInput(event.target.value)}
               placeholder="Digite sua mensagem..."
               disabled={isStreaming}
-              className="h-11"
+              className="h-11 border-0 bg-transparent px-3 shadow-none focus-visible:ring-0"
             />
-            <Button type="submit" disabled={!input.trim() || isStreaming} className="h-11 px-5">
-              {isStreaming ? "Enviando..." : "Enviar"}
+            <Button type="submit" disabled={!input.trim() || isStreaming} className="h-10 rounded-xl px-4 shadow-sm">
+              {isStreaming ? "Enviando..." : <><SendHorizontal className="size-4" />Enviar</>}
             </Button>
           </div>
         </form>

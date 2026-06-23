@@ -1,4 +1,4 @@
-export type ProviderId = "openai" | "anthropic" | "google" | "custom" | "ollama";
+export type ProviderId = "openai" | "anthropic" | "google" | "ollama";
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -42,15 +42,6 @@ export const AVAILABLE_PROVIDERS: ProviderConfig[] = [
   {
     id: "ollama",
     name: "Ollama",
-    models: [{ id: "", name: "Modelo personalizado" }],
-    requiresKey: true,
-    requiresBaseUrl: true,
-    baseUrlPlaceholder: "http://localhost:11434/v1",
-    modelIsEditable: true,
-  },
-  {
-    id: "custom",
-    name: "Custom (OpenAI-compatible)",
     models: [{ id: "", name: "Modelo personalizado" }],
     requiresKey: true,
     requiresBaseUrl: true,

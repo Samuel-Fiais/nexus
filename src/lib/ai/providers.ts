@@ -1,7 +1,5 @@
-import type { ProviderId } from "./config";
-
 export interface RuntimeProvider {
-  id: ProviderId;
+  id: "openai" | "anthropic" | "google";
   envKey?: string;
 }
 
@@ -19,11 +17,3 @@ export const google: RuntimeProvider = {
   id: "google",
   envKey: "GOOGLE_GENERATIVE_AI_API_KEY",
 };
-
-export function createCustomProvider(baseURL: string, apiKey: string) {
-  return {
-    id: "custom" as const,
-    baseURL,
-    apiKey,
-  };
-}
