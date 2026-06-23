@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
 import { Pool, type QueryResultRow } from "@neondatabase/serverless";
@@ -158,7 +158,7 @@ function memoryTypeValue(value: unknown): MemoryType {
 }
 
 function boolValue(value: unknown): boolean {
-  return value === true || value === 1 || value === "1";
+  return value === true || value === 1 || value === "1" || String(value) === "true";
 }
 
 function liveLinkStatusValue(value: unknown): LiveLinkExtractionRecord["status"] {
@@ -166,23 +166,134 @@ function liveLinkStatusValue(value: unknown): LiveLinkExtractionRecord["status"]
 }
 
 async function one<T extends DbRow = DbRow>(sql: string, params: unknown[] = []) {
-  const result = await (await getDb()).query<T>(sql, params);
+  const p = await getDb();
+  const result = await p.query<T>(sql, params);
   return result.rows[0] ?? null;
 }
 
 async function many<T extends DbRow = DbRow>(sql: string, params: unknown[] = []) {
-  const result = await (await getDb()).query<T>(sql, params);
+  const p = await getDb();
+  const result = await p.query<T>(sql, params);
   return result.rows;
 }
 
 async function exec(sql: string, params: unknown[] = []) {
-  await (await getDb()).query(sql, params);
+  const p = await getDb();
+  await p.query(sql, params);
 }
+
+const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS tenants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  soul TEXT NOT NULL DEFAULT '',
+  general_behavior TEXT NOT NULL DEFAULT '',
+  default_provider_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  email TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
+  password_hash TEXT NOT NULL DEFAULT '',
+  model_override_provider_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS providers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('openai', 'anthropic', 'google', 'ollama', 'custom')),
+  name TEXT NOT NULL,
+  endpoint_url TEXT,
+  api_key TEXT,
+  model TEXT NOT NULL DEFAULT '',
+  model_alias TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_memories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK(type IN ('fact', 'preference', 'decision')),
+  content TEXT NOT NULL,
+  tags TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS org_memories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('text', 'link', 'pdf', 'image')),
+  content TEXT NOT NULL,
+  url TEXT,
+  file_path TEXT,
+  file_name TEXT,
+  mime_type TEXT,
+  tags TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  created_by UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS behavior_memories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  tags TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS live_link_extractions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
+  content TEXT NOT NULL DEFAULT '',
+  error TEXT,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(conversation_id, url)
+);
+`;
 
 async function initialize(database: Pool) {
   mkdirSync(DATA_DIR, { recursive: true });
-  const schema = readFileSync(path.join(process.cwd(), "src/lib/schema.sql"), "utf8");
-  await database.query(schema);
+  // Split SCHEMA_SQL into individual commands if needed, 
+  // but Neon/PG usually handles multiple commands in one query.
+  await database.query(SCHEMA_SQL);
   await seed(database);
 }
 
@@ -194,7 +305,9 @@ export async function getDb() {
     }
     pool = new Pool({ connectionString });
   }
-  initPromise ??= initialize(pool);
+  if (!initPromise) {
+    initPromise = initialize(pool);
+  }
   await initPromise;
   return pool;
 }
@@ -233,8 +346,10 @@ async function seed(database: Pool) {
     ],
   );
   const tenantId = tenant.rows[0].id;
-  const adminPasswordHash = await bcrypt.hash("admin123", 12);
-  const userPasswordHash = await bcrypt.hash("user123", 12);
+  
+  // Use a faster salt round for serverless
+  const adminPasswordHash = await bcrypt.hash("admin123", 10);
+  const userPasswordHash = await bcrypt.hash("user123", 10);
 
   await database.query(
     `INSERT INTO users (tenant_id, email, name, role, password_hash)
@@ -350,7 +465,7 @@ function mapMessage(item: DbRow): MessageRecord {
   return {
     id: stringValue(item.id),
     conversationId: stringValue(item.conversation_id),
-    role: item.role === "system" || item.role === "assistant" ? item.role : "user",
+    role: (item.role === "system" || item.role === "assistant") ? item.role : "user",
     content: stringValue(item.content),
     createdAt: stringValue(item.created_at),
   };
@@ -372,7 +487,7 @@ function mapUserMemory(item: DbRow): UserMemoryRecord {
 }
 
 function mapOrgMemory(item: DbRow): OrgMemoryRecord {
-  const sourceType = item.source_type === "link" || item.source_type === "pdf" || item.source_type === "image" ? item.source_type : "text";
+  const sourceType = (item.source_type === "link" || item.source_type === "pdf" || item.source_type === "image") ? item.source_type : "text";
   return {
     id: stringValue(item.id),
     tenantId: stringValue(item.tenant_id),
@@ -497,7 +612,7 @@ export async function resolveProviderForUser(user: SessionUser, requestedProvide
   const tenant = await getTenant(user.tenantId);
   const providerId = user.role === "admin" && requestedProviderId
     ? requestedProviderId
-    : nullableString(fullUser?.model_override_provider_id) ?? tenant?.defaultProviderId ?? null;
+    : (nullableString(fullUser?.model_override_provider_id) ?? tenant?.defaultProviderId ?? null);
   if (!providerId) return null;
   const provider = await getProvider(user.tenantId, providerId);
   return provider?.enabled ? provider : null;
