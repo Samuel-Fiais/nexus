@@ -312,7 +312,9 @@ export function ChatWorkspace({
             {user.role === "admin" ? (
               <Select value={selectedProviderId} onValueChange={(value) => setSelectedProviderId(value || "")}>
                 <SelectTrigger className="w-[220px]">
-                  <SelectValue placeholder="Provedor/modelo" />
+                  <SelectValue placeholder="Provedor/modelo">
+                    {selectedProviderId ? modelLabel(providers.find((p) => p.id === selectedProviderId) ?? null) : "Provedor/modelo"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {providers

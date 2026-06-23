@@ -4,8 +4,10 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateText, streamText, type LanguageModel } from "ai";
+import { generateText, stepCountIs, streamText, tool, type LanguageModel } from "ai";
+import { z } from "zod";
 import type { BehaviorMemoryRecord, OrgMemoryRecord, ProviderRecord, SessionUser, TenantRecord, UserMemoryRecord } from "@/lib/db";
+import { upsertUserMemory, listUserMemories } from "@/lib/db";
 
 export type CoreMessage = {
   role: "system" | "user" | "assistant";
@@ -126,6 +128,21 @@ export function buildSystemPrompt(context: ChatContext) {
     user.length ? `Memórias do usuário:\n${user.join("\n")}` : "",
     org.length ? `Memórias organizacionais relevantes:\n${org.join("\n")}` : "",
     liveLinks.length ? `Links consultados ao vivo nesta conversa:\n${liveLinks.join("\n")}` : "",
+    "",
+    "## Ferramentas disponíveis",
+    "Você tem acesso às seguintes ferramentas para gerenciar memórias do usuário:",
+    "",
+    "1. `save_user_memory` — Salva uma memória do usuário (fato, preferência ou decisão).",
+    "   Use quando o usuário pedir explicitamente para lembrar algo, ou quando você identificar",
+    "   informação relevante que deve ser persistida entre conversas.",
+    "   Parâmetros: type (fact|preference|decision), content (texto da memória).",
+    "",
+    "2. `get_user_memories` — Busca memórias do usuário por tipo ou palavra-chave.",
+    "   Use quando precisar consultar informações salvas anteriormente.",
+    "   Parâmetros: type (opcional, fact|preference|decision), query (opcional, texto para busca).",
+    "",
+    "Sempre que o usuário disser algo como 'salve isso', 'lembre disso', 'guarda essa informação',",
+    "use save_user_memory. Não apenas confirme verbalmente — execute a ferramenta.",
   ]);
 }
 
@@ -172,6 +189,37 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
       model,
       system: buildSystemPrompt(context),
       messages,
+      tools: {
+        save_user_memory: tool({
+          description: "Salva uma memória do usuário (fato, preferência ou decisão). Use quando o usuário pedir para lembrar algo.",
+          inputSchema: z.object({
+            type: z.enum(["fact", "preference", "decision"]).describe("Tipo da memória"),
+            content: z.string().min(1).describe("Conteúdo da memória a ser salva"),
+          }),
+          execute: async ({ type, content }) => {
+            upsertUserMemory(context.user, { type, content });
+            return `Memória salva com sucesso (${type}).`;
+          },
+        }),
+        get_user_memories: tool({
+          description: "Busca memórias do usuário, opcionalmente filtradas por tipo ou palavra-chave.",
+          inputSchema: z.object({
+            type: z.enum(["fact", "preference", "decision"]).optional().describe("Filtrar por tipo de memória"),
+            query: z.string().optional().describe("Palavra-chave para buscar no conteúdo das memórias"),
+          }),
+          execute: async ({ type, query }) => {
+            const memories = listUserMemories(context.user, context.user.id);
+            let filtered = memories;
+            if (type) filtered = filtered.filter((m) => m.type === type);
+            if (query) {
+              const q = query.toLowerCase();
+              filtered = filtered.filter((m) => m.content.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q) || m.tags.toLowerCase().includes(q));
+            }
+            return filtered.slice(0, 10).map((m) => `[${m.type}] ${m.summary || m.content}`).join("\n") || "Nenhuma memória encontrada.";
+          },
+        }),
+      },
+      stopWhen: stepCountIs(5),
       onFinish({ text }) {
         onFinish(text);
       },
