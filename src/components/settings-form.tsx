@@ -52,7 +52,7 @@ type UserMemory = {
 type OrgMemory = {
   id: string;
   title: string;
-  sourceType: "text" | "markdown" | "link" | "pdf" | "image";
+  sourceType: "text" | "link" | "pdf" | "image";
   summary: string;
   tags: string;
   fileName: string | null;
@@ -89,8 +89,10 @@ const providerKindLabels: Record<Provider["kind"], string> = {
   custom: "Compatível OpenAI",
 };
 
-function modelLabel(provider: Provider) {
-  return `${provider.modelAlias || provider.name} / ${provider.model}`;
+function modelLabel(provider: Provider | ProviderDraft | null) {
+  if (!provider) return "Nenhum";
+  const p = provider;
+  return `${p.modelAlias || p.name} / ${p.model}`;
 }
 
 function emptyProvider(): ProviderDraft {
@@ -137,7 +139,7 @@ export function SettingsForm({
 
   // Org memory form
   const [orgTitle, setOrgTitle] = useState("");
-  const [orgSourceType, setOrgSourceType] = useState<"text" | "markdown" | "link">("text");
+  const [orgSourceType, setOrgSourceType] = useState<"text" | "link" | "pdf" | "image">("text");
   const [orgContent, setOrgContent] = useState("");
   const [orgUrl, setOrgUrl] = useState("");
 
@@ -274,20 +276,39 @@ export function SettingsForm({
 
   async function saveOrgMemory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const response = await fetch("/api/org-memories", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: orgTitle,
-        sourceType: orgSourceType,
-        content: orgContent,
-        url: orgUrl || null,
-      }),
-    });
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as { error?: string } | null;
-      toast.error(data?.error || "Não foi possível criar memória.");
-      return;
+    const body: Record<string, unknown> = {
+      title: orgTitle,
+      sourceType: orgSourceType,
+      content: orgContent,
+      url: orgUrl || null,
+    };
+
+    // If PDF or image, send as FormData with file
+    const fileInput = (event.target as HTMLFormElement).querySelector<HTMLInputElement>('input[type="file"]');
+    const file = fileInput?.files?.[0];
+    if ((orgSourceType === "pdf" || orgSourceType === "image") && file) {
+      const formData = new FormData();
+      formData.append("title", orgTitle);
+      formData.append("sourceType", orgSourceType);
+      formData.append("content", orgContent);
+      formData.append("file", file);
+      const response = await fetch("/api/org-memories", { method: "POST", body: formData });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        toast.error(data?.error || "Não foi possível criar memória.");
+        return;
+      }
+    } else {
+      const response = await fetch("/api/org-memories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        toast.error(data?.error || "Não foi possível criar memória.");
+        return;
+      }
     }
     setOrgTitle("");
     setOrgContent("");
@@ -404,7 +425,9 @@ export function SettingsForm({
                   Modelo padrão do tenant
                   <Select value={defaultProviderId} onValueChange={(value) => setDefaultProviderId(value || "none")}>
                     <SelectTrigger className="w-full md:w-[360px]">
-                      <SelectValue placeholder="Modelo padrão" />
+                      <SelectValue placeholder="Modelo padrão">
+                        {defaultProviderId !== "none" ? modelLabel(providers.find((p) => p.id === defaultProviderId) ?? null) : "Nenhum"}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Nenhum</SelectItem>
@@ -503,7 +526,11 @@ export function SettingsForm({
               </div>
               <div className="grid gap-2 md:grid-cols-2">
                 <Select value={newProvider.kind} onValueChange={(value) => setNewProvider((item) => ({ ...item, kind: value as Provider["kind"] }))}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full">
+                    <SelectValue>
+                      {providerKindLabels[newProvider.kind]}
+                    </SelectValue>
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="custom">Compatível OpenAI</SelectItem>
                     <SelectItem value="ollama">Ollama</SelectItem>
@@ -563,7 +590,11 @@ export function SettingsForm({
               <CardContent className="grid gap-4">
                 <form className="flex flex-col gap-2 md:flex-row" onSubmit={saveUserMemory}>
                   <Select value={memoryType} onValueChange={(value) => setMemoryType(value as UserMemory["type"])}>
-                    <SelectTrigger className="w-full md:w-[140px]"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full md:w-[140px]">
+                      <SelectValue>
+                        {memoryType === "fact" ? "Fato" : memoryType === "preference" ? "Preferência" : "Decisão"}
+                      </SelectValue>
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="fact">Fato</SelectItem>
                       <SelectItem value="preference">Preferência</SelectItem>
@@ -572,7 +603,11 @@ export function SettingsForm({
                   </Select>
                   {user.role === "admin" ? (
                     <Select value={memoryUserId} onValueChange={(value) => setMemoryUserId(value || user.id)}>
-                      <SelectTrigger className="w-full md:w-[160px]"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="w-full md:w-[160px]">
+                        <SelectValue>
+                          {users.find((u) => u.id === memoryUserId)?.name ?? "Selecione"}
+                        </SelectValue>
+                      </SelectTrigger>
                       <SelectContent>
                         {users.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
                       </SelectContent>
@@ -616,12 +651,17 @@ export function SettingsForm({
                   <form className="grid gap-3" onSubmit={saveOrgMemory}>
                     <div className="grid gap-2 md:grid-cols-3">
                       <Input value={orgTitle} onChange={(e) => setOrgTitle(e.target.value)} placeholder="Título" required />
-                      <Select value={orgSourceType} onValueChange={(value) => setOrgSourceType(value as "text" | "markdown" | "link")}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                      <Select value={orgSourceType} onValueChange={(value) => setOrgSourceType(value as "text" | "link" | "pdf" | "image")}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue>
+                            {orgSourceType === "text" ? "Texto" : orgSourceType === "link" ? "Link" : orgSourceType === "pdf" ? "PDF" : "Imagem"}
+                          </SelectValue>
+                        </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="text">Texto</SelectItem>
-                          <SelectItem value="markdown">Markdown</SelectItem>
                           <SelectItem value="link">Link</SelectItem>
+                          <SelectItem value="pdf">PDF</SelectItem>
+                          <SelectItem value="image">Imagem</SelectItem>
                         </SelectContent>
                       </Select>
                       {orgSourceType === "link" ? (

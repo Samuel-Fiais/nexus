@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     url = body.url?.trim() || null;
   } else {
     const form = await request.formData();
-    sourceType = form.get("sourceType") === "markdown" || form.get("sourceType") === "link" || form.get("sourceType") === "pdf" || form.get("sourceType") === "image"
+    sourceType = form.get("sourceType") === "link" || form.get("sourceType") === "pdf" || form.get("sourceType") === "image"
       ? String(form.get("sourceType"))
       : "text";
     title = String(form.get("title") || "").trim();
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
 
   const id = insertOrgMemory(user, {
     title,
-    sourceType: sourceType as "text" | "markdown" | "link" | "pdf" | "image",
+    sourceType: sourceType as "text" | "link" | "pdf" | "image",
     content,
     url: normalizedUrl ?? url,
     filePath,

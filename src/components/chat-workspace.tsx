@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { LogOut, Menu, MessageSquare, Moon, Plus, SendHorizontal, Settings, Sun, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -358,13 +360,17 @@ export function ChatWorkspace({
                   {message.content ? (
                     <div
                       className={cn(
-                        "whitespace-pre-wrap text-[0.95rem] leading-7",
+                        "prose prose-sm dark:prose-invert max-w-none text-[0.95rem] leading-7",
                         message.role === "user"
                           ? "max-w-[82%] rounded-2xl border border-primary/10 bg-primary px-4 py-3 text-primary-foreground shadow-sm"
                           : "max-w-full rounded-none px-1 py-1 text-foreground",
                       )}
                     >
-                      {message.content}
+                      {message.role === "assistant" ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                      ) : (
+                        message.content
+                      )}
                     </div>
                   ) : (
                     <div className="flex max-w-[80%] items-center gap-2 rounded-2xl border border-border/70 bg-card px-4 py-3 shadow-sm">

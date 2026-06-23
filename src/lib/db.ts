@@ -80,7 +80,7 @@ export type OrgMemoryRecord = {
   id: string;
   tenantId: string;
   title: string;
-  sourceType: "text" | "markdown" | "link" | "pdf" | "image";
+  sourceType: "text" | "link" | "pdf" | "image";
   content: string;
   url: string | null;
   filePath: string | null;
@@ -267,7 +267,7 @@ function migrate(database: DatabaseSync) {
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
-      source_type TEXT NOT NULL CHECK(source_type IN ('text', 'markdown', 'link', 'pdf', 'image')),
+      source_type TEXT NOT NULL CHECK(source_type IN ('text', 'link', 'pdf', 'image')),
       content TEXT NOT NULL,
       url TEXT,
       file_path TEXT,
@@ -447,7 +447,7 @@ function mapUserMemory(item: DbRow): UserMemoryRecord {
 }
 
 function mapOrgMemory(item: DbRow): OrgMemoryRecord {
-  const sourceType = item.source_type === "markdown" || item.source_type === "link" || item.source_type === "pdf" || item.source_type === "image" ? item.source_type : "text";
+  const sourceType = item.source_type === "link" || item.source_type === "pdf" || item.source_type === "image" ? item.source_type : "text";
   return {
     id: stringValue(item.id),
     tenantId: stringValue(item.tenant_id),

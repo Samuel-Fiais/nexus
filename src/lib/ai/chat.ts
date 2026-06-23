@@ -258,7 +258,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
           inputSchema: z.object({
             title: z.string().min(1).describe("Título da memória"),
             content: z.string().min(1).describe("Conteúdo da memória"),
-            sourceType: z.enum(["text", "markdown", "link"]).describe("Tipo de conteúdo"),
+            sourceType: z.enum(["text", "link", "pdf", "image"]).describe("Tipo de conteúdo"),
             url: z.string().optional().describe("URL opcional"),
           }),
           execute: async ({ title, content, sourceType, url }) => {
