@@ -4,7 +4,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateText, stepCountIs, streamText, tool, type LanguageModel } from "ai";
+import { generateText, stepCountIs, streamText, tool, type LanguageModel, type StepResult, type ToolSet } from "ai";
 import { z } from "zod";
 import type { BehaviorMemoryRecord, OrgMemoryRecord, ProviderRecord, SessionUser, TenantRecord, UserMemoryRecord } from "@/lib/db";
 import {
@@ -44,6 +44,22 @@ export type ChatContext = {
   userMemories: UserMemoryRecord[];
   behaviorMemories: BehaviorMemoryRecord[];
   liveLinks: ChatLiveLink[];
+};
+
+type TraceStep = {
+  text: string;
+  toolCalls: { name: string; args: Record<string, unknown>; result: string }[];
+};
+
+type TraceData = {
+  steps: TraceStep[];
+  sources: { number: number; type: string; content: string }[];
+};
+
+type MemoryReference = {
+  number: number;
+  type: string;
+  content: string;
 };
 
 export function providerLabel(provider: ProviderRecord | null) {
@@ -116,6 +132,14 @@ function liveLinkPromptLine(link: ChatLiveLink) {
   return "";
 }
 
+function userMemoryReferences(context: ChatContext): MemoryReference[] {
+  return context.userMemories.slice(0, 8).map((memory, index) => ({
+    number: index + 1,
+    type: memory.type,
+    content: memory.summary || memory.content,
+  }));
+}
+
 export function buildSystemPrompt(context: ChatContext) {
   const org = context.orgMemories
     .map(orgMemoryPromptLine)
@@ -124,9 +148,8 @@ export function buildSystemPrompt(context: ChatContext) {
     .map(liveLinkPromptLine)
     .filter(Boolean)
     .slice(0, 10);
-  const user = context.userMemories
-    .map((memory) => `- ${memory.type}: ${memory.summary || memory.content}`)
-    .slice(0, 8);
+  const user = userMemoryReferences(context)
+    .map((memory) => `[${memory.number}] ${memory.type}: ${memory.content}`);
   const behavior = context.behaviorMemories
     .map((memory) => `- ${memory.summary || memory.content}`)
     .slice(0, 8);
@@ -138,6 +161,11 @@ export function buildSystemPrompt(context: ChatContext) {
     user.length ? `Memórias do usuário:\n${user.join("\n")}` : "",
     org.length ? `Memórias organizacionais relevantes:\n${org.join("\n")}` : "",
     liveLinks.length ? `Links consultados ao vivo nesta conversa:\n${liveLinks.join("\n")}` : "",
+    "",
+    "## Formato de resposta",
+    "- Quando você usar informações de uma memória específica, adicione o número de referência entre colchetes ao lado: `[1]`, `[2]`, etc.",
+    '- No final da sua resposta, inclua uma seção "## Fontes" listando cada referência usada.',
+    '- Exemplo: "O usuário se chama Samuel[1] e prefere design minimalista[2]."',
     "",
     "## Ferramentas disponíveis",
     "Você tem acesso às seguintes ferramentas para gerenciar memórias:",
@@ -195,6 +223,78 @@ function textResponseStream(text: string) {
   });
 }
 
+function toRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  return { value };
+}
+
+function stringifyTraceValue(value: unknown) {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function traceStepFromResult(step: StepResult<ToolSet>): TraceStep {
+  return {
+    text: step.text,
+    toolCalls: step.toolCalls.map((call) => {
+      const result = step.toolResults.find((item) => item.toolCallId === call.toolCallId);
+      return {
+        name: call.toolName,
+        args: toRecord(call.input),
+        result: result ? stringifyTraceValue(result.output) : "",
+      };
+    }),
+  };
+}
+
+function referencedSources(text: string, sources: MemoryReference[]) {
+  const used = new Set<number>();
+  for (const match of text.matchAll(/\[(\d+)\]/g)) {
+    used.add(Number(match[1]));
+  }
+  return sources.filter((source) => used.has(source.number));
+}
+
+function traceBlock(trace: TraceData) {
+  return `\n\n__TRACE__\n${JSON.stringify(trace)}\n__ENDTRACE__`;
+}
+
+function tracedTextResponse(
+  textStream: AsyncIterable<string>,
+  trace: TraceData,
+  onFinish: (text: string) => void | Promise<void>,
+) {
+  const encoder = new TextEncoder();
+  let fullText = "";
+
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for await (const chunk of textStream) {
+            fullText += chunk;
+            controller.enqueue(encoder.encode(chunk));
+          }
+
+          const block = traceBlock(trace);
+          controller.enqueue(encoder.encode(block));
+          await onFinish(fullText + block);
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+    }),
+    {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    },
+  );
+}
+
 export function createChatStream(messages: CoreMessage[], context: ChatContext, onFinish: (text: string) => void | Promise<void>) {
   const model = context.provider ? createModel(context.provider) : null;
 
@@ -207,6 +307,11 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
   }
 
   try {
+    const memorySources = userMemoryReferences(context);
+    const trace: TraceData = {
+      steps: [],
+      sources: [],
+    };
     const result = streamText({
       model,
       system: buildSystemPrompt(context),
@@ -334,11 +439,14 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
         }),
       },
       stopWhen: stepCountIs(5),
+      onStepFinish(step) {
+        trace.steps.push(traceStepFromResult(step));
+      },
       onFinish({ text }) {
-        onFinish(text);
+        trace.sources = referencedSources(text, memorySources);
       },
     });
-    return result.toTextStreamResponse();
+    return tracedTextResponse(result.textStream, trace, onFinish);
   } catch {
     const text = fallbackAnswer(messages, context);
     onFinish(text);

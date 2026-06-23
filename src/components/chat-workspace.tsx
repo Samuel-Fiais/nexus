@@ -7,6 +7,7 @@ import { useTheme } from "next-themes";
 import { LogOut, Menu, MessageSquare, Moon, Plus, SendHorizontal, Settings, Sun, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,12 +40,23 @@ type Conversation = {
   updatedAt: string;
 };
 
+type TraceStep = {
+  text: string;
+  toolCalls: { name: string; args: Record<string, unknown>; result: string }[];
+};
+
+type TraceData = {
+  steps: TraceStep[];
+  sources: { number: number; type: string; content: string }[];
+};
+
 type Message = {
   id: string;
   conversationId: string;
   role: "system" | "user" | "assistant";
   content: string;
   createdAt: string;
+  trace?: TraceData | null;
 };
 
 type ChatWorkspaceProps = {
@@ -62,6 +74,98 @@ function modelLabel(provider: Provider | null) {
   return `${provider.modelAlias || provider.name} / ${provider.model || "modelo não definido"}`;
 }
 
+function parseTraceContent(content: string): { content: string; trace: TraceData | null } {
+  const marker = "\n\n__TRACE__\n";
+  const start = content.indexOf(marker);
+  if (start === -1) return { content, trace: null };
+
+  const traceStart = start + marker.length;
+  const end = content.indexOf("\n__ENDTRACE__", traceStart);
+  if (end === -1) return { content, trace: null };
+
+  try {
+    const trace = JSON.parse(content.slice(traceStart, end)) as TraceData;
+    return { content: content.slice(0, start), trace };
+  } catch {
+    return { content: content.slice(0, start), trace: null };
+  }
+}
+
+function normalizeMessageTrace(message: Message): Message {
+  if (message.trace !== undefined) return message;
+  const parsed = parseTraceContent(message.content);
+  return { ...message, content: parsed.content, trace: parsed.trace };
+}
+
+function referenceMarkdown(content: string, messageId: string, sources: TraceData["sources"]) {
+  if (!sources.length) return content;
+  const sourceNumbers = new Set(sources.map((source) => source.number));
+  return content.replace(/\[(\d+)\]/g, (match, value: string) => {
+    const number = Number(value);
+    return sourceNumbers.has(number) ? `[${match}](#fonte-${messageId}-${number})` : match;
+  });
+}
+
+function TraceView({
+  trace,
+  messageId,
+  highlightedSource,
+}: {
+  trace: TraceData;
+  messageId: string;
+  highlightedSource: number | null;
+}) {
+  return (
+    <div className="not-prose mt-4 space-y-4 border-t border-border/70 pt-3 text-xs text-muted-foreground">
+      {trace.steps.length ? (
+        <details className="group rounded-md border border-border/60 bg-muted/25 px-3 py-2">
+          <summary className="cursor-pointer select-none font-medium text-muted-foreground transition-colors hover:text-foreground">
+            🧠 Raciocínio
+          </summary>
+          <div className="mt-3 space-y-3">
+            {trace.steps.map((step, index) => (
+              <div key={`${messageId}-step-${index}`} className="space-y-2">
+                <p className="font-medium text-foreground/80">Etapa {index + 1}</p>
+                {step.text ? <p className="whitespace-pre-wrap leading-5">{step.text}</p> : <p className="italic">Sem texto nesta etapa.</p>}
+                {step.toolCalls.map((toolCall, toolIndex) => (
+                  <div key={`${messageId}-tool-${index}-${toolIndex}`} className="space-y-1">
+                    <p className="font-medium text-foreground/80">Ferramenta: {toolCall.name}</p>
+                    <pre className="overflow-x-auto rounded-md bg-background p-2 text-[0.72rem] leading-5 text-foreground/80">
+                      {JSON.stringify({ argumentos: toolCall.args, resultado: toolCall.result }, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+
+      {trace.sources.length ? (
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold text-foreground/80">📚 Fontes</h3>
+          <ul className="space-y-1.5">
+            {trace.sources.map((source) => (
+              <li
+                key={`${messageId}-source-${source.number}`}
+                id={`fonte-${messageId}-${source.number}`}
+                className={cn(
+                  "rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 transition-colors",
+                  highlightedSource === source.number && "border-primary/50 bg-primary/10 text-foreground",
+                )}
+              >
+                <span className="mr-1 font-medium text-foreground/80">[{source.number}]</span>
+                <span className="mr-1">{source.type}:</span>
+                <span>{source.content}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 export function ChatWorkspace({
   user,
   tenantName,
@@ -76,9 +180,10 @@ export function ChatWorkspace({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [conversations, setConversations] = useState(initialConversations);
   const [activeId, setActiveId] = useState(initialConversationId);
-  const [messages, setMessages] = useState(initialMessages);
+  const [messages, setMessages] = useState(() => initialMessages.map(normalizeMessageTrace));
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [highlightedSource, setHighlightedSource] = useState<number | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState(resolvedProvider?.id ?? providers.find((provider) => provider.enabled)?.id ?? "");
   const viewportRef = useRef<HTMLDivElement>(null);
 
@@ -107,7 +212,7 @@ export function ChatWorkspace({
     }
     const data = (await response.json()) as { messages: Message[] };
     setActiveId(id);
-    setMessages(data.messages);
+    setMessages(data.messages.map(normalizeMessageTrace));
     setSheetOpen(false);
   }
 
@@ -210,15 +315,25 @@ export function ChatWorkspace({
       const reader = response.body?.getReader();
       if (!reader) throw new Error("Resposta vazia do servidor.");
       const decoder = new TextDecoder();
+      let assistantContent = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value);
+        const chunk = decoder.decode(value, { stream: true });
+        assistantContent += chunk;
         setMessages((items) =>
           items.map((message) => (message.id === assistantId ? { ...message, content: message.content + chunk } : message)),
         );
       }
+
+      const finalChunk = decoder.decode();
+      if (finalChunk) assistantContent += finalChunk;
+
+      const parsed = parseTraceContent(assistantContent);
+      setMessages((items) =>
+        items.map((message) => (message.id === assistantId ? { ...message, content: parsed.content, trace: parsed.trace } : message)),
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao enviar mensagem.");
       setMessages((items) => items.filter((message) => message.id !== assistantId));
@@ -367,7 +482,43 @@ export function ChatWorkspace({
                       )}
                     >
                       {message.role === "assistant" ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                        <>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a({ href, children, ...props }) {
+                                const match = href?.match(/^#fonte-.+-(\d+)$/);
+                                if (!match) return <a href={href} {...props}>{children}</a>;
+                                const sourceHref = href ?? "";
+                                const sourceNumber = Number(match[1]);
+                                return (
+                                  <a
+                                    href={sourceHref}
+                                    className="align-super text-[0.7em] font-semibold no-underline hover:underline"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      setHighlightedSource(sourceNumber);
+                                      document.querySelector(sourceHref)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                                    }}
+                                    onMouseEnter={() => setHighlightedSource(sourceNumber)}
+                                    onMouseLeave={() => setHighlightedSource(null)}
+                                  >
+                                    {children}
+                                  </a>
+                                );
+                              },
+                            } satisfies Components}
+                          >
+                            {referenceMarkdown(message.content, message.id, message.trace?.sources ?? [])}
+                          </ReactMarkdown>
+                          {message.trace ? (
+                            <TraceView
+                              trace={message.trace}
+                              messageId={message.id}
+                              highlightedSource={highlightedSource}
+                            />
+                          ) : null}
+                        </>
                       ) : (
                         message.content
                       )}
