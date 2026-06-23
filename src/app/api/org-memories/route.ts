@@ -72,7 +72,10 @@ export async function POST(request: Request) {
   if (sourceType === "link" && normalizedUrl && !content) {
     content = `Link armazenado para consulta ao vivo no chat: ${normalizedUrl}`;
   }
-  if (!content) return jsonError("Informe conteúdo, link ou arquivo.");
+  if (!content && !filePath) {
+    // For PDF/image with no text content, use filename as content
+    content = fileName ? `Arquivo: ${fileName}` : "Arquivo enviado";
+  }
 
   const tenant = await getTenant(user.tenantId);
   const provider = tenant ? await resolveProviderForUser(user) : null;

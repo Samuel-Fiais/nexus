@@ -290,7 +290,6 @@ export function SettingsForm({
       const formData = new FormData();
       formData.append("title", orgTitle);
       formData.append("sourceType", orgSourceType);
-      formData.append("content", orgContent);
       formData.append("file", file);
       const response = await fetch("/api/org-memories", { method: "POST", body: formData });
       if (!response.ok) {
@@ -670,12 +669,14 @@ export function SettingsForm({
                         <Input type="file" accept={orgSourceType === "pdf" ? ".pdf" : "image/*"} />
                       ) : null}
                     </div>
-                    <textarea
-                      value={orgContent}
-                      onChange={(e) => setOrgContent(e.target.value)}
-                      placeholder={orgSourceType === "link" ? "Descrição ou resumo do link" : "Conteúdo"}
-                      className="min-h-20 rounded-lg border border-input bg-background px-3 py-2 text-sm leading-6 outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                    />
+                    {orgSourceType === "text" || orgSourceType === "link" ? (
+                      <textarea
+                        value={orgContent}
+                        onChange={(e) => setOrgContent(e.target.value)}
+                        placeholder={orgSourceType === "link" ? "Descrição ou resumo do link" : "Conteúdo"}
+                        className="min-h-20 rounded-lg border border-input bg-background px-3 py-2 text-sm leading-6 outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                      />
+                    ) : null}
                     <div>
                       <Button type="submit" size="sm">Criar memória</Button>
                     </div>
