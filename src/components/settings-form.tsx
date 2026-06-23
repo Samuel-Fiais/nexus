@@ -666,6 +666,8 @@ export function SettingsForm({
                       </Select>
                       {orgSourceType === "link" ? (
                         <Input value={orgUrl} onChange={(e) => setOrgUrl(e.target.value)} placeholder="https://..." />
+                      ) : orgSourceType === "pdf" || orgSourceType === "image" ? (
+                        <Input type="file" accept={orgSourceType === "pdf" ? ".pdf" : "image/*"} />
                       ) : null}
                     </div>
                     <textarea
