@@ -79,6 +79,8 @@ type ProviderDraft = Provider & {
   apiKey?: string;
 };
 
+type Tab = "soul" | "providers" | "users" | "memories";
+
 const providerKindLabels: Record<Provider["kind"], string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
@@ -115,6 +117,7 @@ export function SettingsForm({
   behaviorMemories: initialBehaviorMemories,
 }: SettingsFormProps) {
   const router = useRouter();
+  const [tab, setTab] = useState<Tab>("soul");
   const [soul, setSoul] = useState(tenant?.soul ?? "");
   const [generalBehavior, setGeneralBehavior] = useState(tenant?.generalBehavior ?? "");
   const [defaultProviderId, setDefaultProviderId] = useState(tenant?.defaultProviderId ?? "none");
@@ -131,6 +134,12 @@ export function SettingsForm({
   const [behaviorMemories, setBehaviorMemories] = useState(initialBehaviorMemories);
   const [behaviorContent, setBehaviorContent] = useState("");
   const [behaviorEditId, setBehaviorEditId] = useState<string | null>(null);
+
+  // Org memory form
+  const [orgTitle, setOrgTitle] = useState("");
+  const [orgSourceType, setOrgSourceType] = useState<"text" | "markdown" | "link">("text");
+  const [orgContent, setOrgContent] = useState("");
+  const [orgUrl, setOrgUrl] = useState("");
 
   async function refreshSettings() {
     const response = await fetch("/api/settings", { cache: "no-store" });
@@ -265,14 +274,24 @@ export function SettingsForm({
 
   async function saveOrgMemory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/org-memories", { method: "POST", body: form });
+    const response = await fetch("/api/org-memories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: orgTitle,
+        sourceType: orgSourceType,
+        content: orgContent,
+        url: orgUrl || null,
+      }),
+    });
     if (!response.ok) {
       const data = (await response.json().catch(() => null)) as { error?: string } | null;
-      toast.error(data?.error || "Não foi possível criar memória organizacional.");
+      toast.error(data?.error || "Não foi possível criar memória.");
       return;
     }
-    event.currentTarget.reset();
+    setOrgTitle("");
+    setOrgContent("");
+    setOrgUrl("");
     toast.success("Memória organizacional criada.");
     await refreshSettings();
   }
@@ -313,370 +332,372 @@ export function SettingsForm({
     setProviders((items) => items.map((provider) => (provider.id === id ? { ...provider, ...patch } : provider)));
   }
 
-  const cardClass = "border-border/80 bg-card/95 shadow-sm";
-  const textareaClass = "rounded-xl border border-input bg-background/60 px-3 py-2 text-sm leading-6 outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "soul", label: "Soul" },
+    { id: "providers", label: "Provedores" },
+    { id: "users", label: "Usuários" },
+    { id: "memories", label: "Memórias" },
+  ];
 
   return (
     <main className="min-h-screen bg-background px-4 py-6 md:px-8 md:py-10">
-      <div className="mx-auto flex max-w-5xl flex-col gap-7">
+      <div className="mx-auto flex max-w-5xl flex-col gap-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="font-heading text-4xl font-normal leading-tight md:text-5xl">Configurações</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Configurações</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               {tenant?.name ?? "Tenant"} · {user.role === "admin" ? "Administrador" : "Usuário"}
             </p>
           </div>
           <Link
             href="/"
-            className="inline-flex h-10 items-center justify-center rounded-xl border border-input bg-card px-4 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-input bg-card px-4 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
           >
             Voltar ao chat
           </Link>
         </div>
 
-        {user.role === "admin" ? (
-          <>
-            <Card className={cardClass}>
-              <CardHeader>
-                <CardTitle className="font-heading text-2xl font-normal">Soul e modelo padrão</CardTitle>
-                <CardDescription>Guia de comportamento do tenant e modelo padrão para usuários sem override.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form className="grid gap-4" onSubmit={saveTenant}>
-                  <label className="grid gap-2 text-sm font-medium">
-                    Soul
-                    <textarea
-                      value={soul}
-                      onChange={(event) => setSoul(event.target.value)}
-                      className={`min-h-28 ${textareaClass}`}
-                    />
-                  </label>
-                  <label className="grid gap-2 text-sm font-medium">
-                    Comportamento geral
-                    <textarea
-                      value={generalBehavior}
-                      onChange={(event) => setGeneralBehavior(event.target.value)}
-                      className={`min-h-24 ${textareaClass}`}
-                    />
-                  </label>
-                  <label className="grid gap-2 text-sm font-medium">
-                    Modelo padrão do tenant
-                    <Select value={defaultProviderId} onValueChange={(value) => setDefaultProviderId(value || "none")}>
-                      <SelectTrigger className="w-full md:w-[360px]">
-                        <SelectValue placeholder="Modelo padrão" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Nenhum</SelectItem>
-                        {providers.filter((provider) => provider.enabled).map((provider) => (
-                          <SelectItem key={provider.id} value={provider.id}>
-                            {modelLabel(provider)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </label>
-                  <div>
-                    <Button type="submit">Salvar tenant</Button>
-                  </div>
-                </form>
-              </CardContent>
-            </Card>
+        {/* Tabs */}
+        <div className="flex gap-1 border-b border-border pb-px">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2 text-sm font-medium transition-colors rounded-t-lg border border-b-0 -mb-px ${
+                tab === t.id
+                  ? "bg-card border-border text-foreground shadow-sm"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/50"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
-            <Card className={cardClass}>
-              <CardHeader>
-                <CardTitle className="font-heading text-2xl font-normal">Provedores</CardTitle>
-                <CardDescription>Cada provedor personalizado aparece pelo próprio nome ou alias no chat.</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                {providers.map((provider) => (
-                  <div key={provider.id} className="grid gap-3 rounded-xl border border-border/80 bg-background/40 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={provider.enabled ? "default" : "secondary"}>{provider.enabled ? "Ativo" : "Inativo"}</Badge>
-                        <span className="text-sm font-medium">{providerKindLabels[provider.kind]}</span>
-                        {provider.hasApiKey ? <span className="text-xs text-muted-foreground">Chave salva</span> : null}
-                      </div>
-                      <Button type="button" variant="destructive" size="sm" onClick={() => void deleteProvider(provider.id)}>
-                        <Trash2 className="size-4" />
-                        Excluir
-                      </Button>
-                    </div>
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <Input value={provider.name} onChange={(event) => updateProvider(provider.id, { name: event.target.value })} placeholder="Nome" />
-                      <Input value={provider.modelAlias ?? ""} onChange={(event) => updateProvider(provider.id, { modelAlias: event.target.value })} placeholder="Alias do modelo (opcional)" />
-                      <Input value={provider.endpointUrl ?? ""} onChange={(event) => updateProvider(provider.id, { endpointUrl: event.target.value })} placeholder="Endpoint URL" />
-                      <div className="relative">
-                        <Input
-                          type={showKeys[provider.id] ? "text" : "password"}
-                          value={provider.apiKey ?? ""}
-                          onChange={(event) => updateProvider(provider.id, { apiKey: event.target.value })}
-                          placeholder={provider.hasApiKey ? "Nova API key (deixe em branco para manter)" : "API key"}
-                          className="pr-10"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowKeys((items) => ({ ...items, [provider.id]: !items[provider.id] }))}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                          tabIndex={-1}
-                        >
-                          {showKeys[provider.id] ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                        </button>
-                      </div>
-                      {provider.kind === "ollama" && ollamaModels[provider.id]?.length ? (
-                        <Select value={provider.model} onValueChange={(value) => updateProvider(provider.id, { model: value || provider.model })}>
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Modelo Ollama" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {ollamaModels[provider.id].map((model) => (
-                              <SelectItem key={model} value={model}>{model}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Input value={provider.model} onChange={(event) => updateProvider(provider.id, { model: event.target.value })} placeholder="Modelo" />
-                      )}
-                      <Select value={provider.enabled ? "yes" : "no"} onValueChange={(value) => updateProvider(provider.id, { enabled: value === "yes" })}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="yes">Ativo</SelectItem>
-                          <SelectItem value="no">Inativo</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {provider.kind === "ollama" ? (
-                        <Button type="button" variant="outline" onClick={() => void fetchOllamaModels(provider)}>
-                          Buscar modelos Ollama
-                        </Button>
-                      ) : null}
-                      <Button type="button" onClick={() => void saveProvider(provider)}>Salvar provedor</Button>
-                    </div>
-                  </div>
-                ))}
-
-                <div className="grid gap-3 rounded-xl border border-dashed border-border bg-background/35 p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Plus className="size-4" />
-                    Novo provedor
-                  </div>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <Select value={newProvider.kind} onValueChange={(value) => setNewProvider((item) => ({ ...item, kind: value as Provider["kind"] }))}>
-                      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="custom">Compatível OpenAI</SelectItem>
-                        <SelectItem value="ollama">Ollama</SelectItem>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="anthropic">Anthropic</SelectItem>
-                        <SelectItem value="google">Google</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Input value={newProvider.name} onChange={(event) => setNewProvider((item) => ({ ...item, name: event.target.value }))} placeholder="Nome do provedor" />
-                    <Input value={newProvider.endpointUrl ?? ""} onChange={(event) => setNewProvider((item) => ({ ...item, endpointUrl: event.target.value }))} placeholder="Endpoint URL" />
-                    <Input value={newProvider.apiKey ?? ""} onChange={(event) => setNewProvider((item) => ({ ...item, apiKey: event.target.value }))} placeholder="API key" />
-                    <Input value={newProvider.model} onChange={(event) => setNewProvider((item) => ({ ...item, model: event.target.value }))} placeholder="Modelo" />
-                    <Input value={newProvider.modelAlias ?? ""} onChange={(event) => setNewProvider((item) => ({ ...item, modelAlias: event.target.value }))} placeholder="Alias (opcional)" />
-                  </div>
-                  <div>
-                    <Button type="button" onClick={() => void saveProvider(newProvider)}>Adicionar provedor</Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className={cardClass}>
-              <CardHeader>
-                <CardTitle className="font-heading text-2xl font-normal">Política por usuário</CardTitle>
-                <CardDescription>Usuários comuns usam o padrão do tenant ou um override definido aqui.</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-3">
-                {users.map((item) => (
-                  <div key={item.id} className="flex flex-col gap-3 rounded-xl border border-border/80 bg-background/40 p-4 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="text-sm font-medium">{item.name}</p>
-                      <p className="text-xs text-muted-foreground">{item.email} · {item.role === "admin" ? "Administrador" : "Usuário"}</p>
-                    </div>
-                    <Select
-                      defaultValue={item.modelOverrideProviderId ?? "none"}
-                      onValueChange={(value) => void saveOverride(item.id, value || "none")}
-                    >
-                      <SelectTrigger className="w-full md:w-[320px]"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Usar padrão do tenant</SelectItem>
-                        {providers.filter((provider) => provider.enabled).map((provider) => (
-                          <SelectItem key={provider.id} value={provider.id}>{modelLabel(provider)}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </>
-        ) : null}
-
-        <Card className={cardClass}>
-          <CardHeader>
-            <CardTitle className="font-heading text-2xl font-normal">Memórias do usuário</CardTitle>
-            <CardDescription>{user.role === "admin" ? "Administradores podem gerenciar memórias de qualquer usuário." : "Crie, edite e exclua suas próprias memórias."}</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <form className="grid gap-3" onSubmit={saveUserMemory}>
-              <div className="grid gap-2 md:grid-cols-[180px_220px_1fr_auto]">
-                <Select value={memoryType} onValueChange={(value) => setMemoryType(value as UserMemory["type"])}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="fact">Fato</SelectItem>
-                    <SelectItem value="preference">Preferência</SelectItem>
-                    <SelectItem value="decision">Decisão</SelectItem>
-                  </SelectContent>
-                </Select>
-                {user.role === "admin" ? (
-                  <Select value={memoryUserId} onValueChange={(value) => setMemoryUserId(value || user.id)}>
-                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+        {/* Soul tab */}
+        {tab === "soul" && user.role === "admin" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold">Soul e comportamento</CardTitle>
+              <CardDescription>Guia de comportamento do tenant e modelo padrão.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form className="grid gap-4" onSubmit={saveTenant}>
+                <label className="grid gap-1.5 text-sm font-medium">
+                  Soul
+                  <textarea
+                    value={soul}
+                    onChange={(event) => setSoul(event.target.value)}
+                    className="min-h-24 rounded-lg border border-input bg-background px-3 py-2 text-sm leading-6 outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                  />
+                </label>
+                <label className="grid gap-1.5 text-sm font-medium">
+                  Comportamento geral
+                  <textarea
+                    value={generalBehavior}
+                    onChange={(event) => setGeneralBehavior(event.target.value)}
+                    className="min-h-20 rounded-lg border border-input bg-background px-3 py-2 text-sm leading-6 outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                  />
+                </label>
+                <label className="grid gap-1.5 text-sm font-medium">
+                  Modelo padrão do tenant
+                  <Select value={defaultProviderId} onValueChange={(value) => setDefaultProviderId(value || "none")}>
+                    <SelectTrigger className="w-full md:w-[360px]">
+                      <SelectValue placeholder="Modelo padrão" />
+                    </SelectTrigger>
                     <SelectContent>
-                      {users.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
+                      <SelectItem value="none">Nenhum</SelectItem>
+                      {providers.filter((provider) => provider.enabled).map((provider) => (
+                        <SelectItem key={provider.id} value={provider.id}>
+                          {modelLabel(provider)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
-                ) : null}
-                <Input value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)} placeholder="Conteúdo da memória" />
-                <Button type="submit">{memoryEditId ? "Atualizar" : "Salvar"}</Button>
-              </div>
-              {memoryEditId ? (
+                </label>
                 <div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setMemoryEditId(null);
-                      setMemoryContent("");
-                      setMemoryUserId(user.id);
-                      setMemoryType("fact");
-                    }}
-                  >
-                    Cancelar edição
+                  <Button type="submit" size="sm">Salvar</Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Providers tab */}
+        {tab === "providers" && user.role === "admin" && (
+          <div className="grid gap-4">
+            {providers.map((provider) => (
+              <div key={provider.id} className="grid gap-3 rounded-lg border border-border bg-card p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant={provider.enabled ? "default" : "secondary"}>{provider.enabled ? "Ativo" : "Inativo"}</Badge>
+                    <span className="text-sm font-medium">{providerKindLabels[provider.kind]}</span>
+                    {provider.hasApiKey ? <span className="text-xs text-muted-foreground">Chave salva</span> : null}
+                  </div>
+                  <Button type="button" variant="destructive" size="sm" onClick={() => void deleteProvider(provider.id)}>
+                    <Trash2 className="size-3.5" />
+                    Excluir
                   </Button>
                 </div>
-              ) : null}
-            </form>
-            <div className="grid gap-2">
-              {userMemories.length ? userMemories.map((memory) => (
-                <div key={memory.id} className="flex items-start justify-between gap-3 rounded-xl border border-border/80 bg-background/40 p-4">
-                  <div>
-                    <p className="text-sm">{memory.content}</p>
-                    <p className="text-xs text-muted-foreground">{memory.userName ? `${memory.userName} · ` : ""}{memory.type}</p>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button type="button" variant="outline" size="sm" onClick={() => editUserMemory(memory)}>
-                      Editar
-                    </Button>
-                    <Button type="button" variant="ghost" size="icon" onClick={() => void deleteUserMemory(memory.id)} aria-label="Excluir memória">
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              )) : <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nenhuma memória de usuário cadastrada.</p>}
-            </div>
-          </CardContent>
-        </Card>
-
-        {user.role === "admin" ? (
-          <>
-            <Card className={cardClass}>
-              <CardHeader>
-                <CardTitle className="font-heading text-2xl font-normal">Memória organizacional</CardTitle>
-                <CardDescription>Texto, markdown, links, PDFs e imagens ficam ligados ao tenant.</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <form className="grid gap-3" onSubmit={saveOrgMemory}>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <Input name="title" placeholder="Título" />
-                    <select
-                      name="sourceType"
-                      defaultValue="text"
-                      className="h-8 rounded-lg border border-input bg-background/60 px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
-                    >
-                      <option value="text">Texto</option>
-                      <option value="markdown">Markdown</option>
-                      <option value="link">Link</option>
-                      <option value="pdf">PDF</option>
-                      <option value="image">Imagem</option>
-                    </select>
-                    <Input name="url" placeholder="URL (opcional)" />
-                    <Input name="file" type="file" />
-                  </div>
-                  <textarea
-                    name="content"
-                    placeholder="Conteúdo ou fallback"
-                    className={`min-h-28 ${textareaClass}`}
-                  />
-                  <div>
-                    <Button type="submit">Criar memória</Button>
-                  </div>
-                </form>
-                <div className="grid gap-2">
-                  {orgMemories.length ? orgMemories.map((memory) => (
-                    <div key={memory.id} className="flex items-start justify-between gap-3 rounded-xl border border-border/80 bg-background/40 p-4">
-                      <div>
-                        <p className="text-sm font-medium">{memory.title}</p>
-                        <p className="text-sm text-muted-foreground">{memory.summary}</p>
-                        <p className="text-xs text-muted-foreground">{memory.sourceType}{memory.fileName ? ` · ${memory.fileName}` : ""}{memory.tags ? ` · ${memory.tags}` : ""}</p>
-                      </div>
-                      <Button type="button" variant="ghost" size="icon" onClick={() => void deleteOrgMemory(memory.id)} aria-label="Excluir memória organizacional">
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  )) : <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nenhuma memória organizacional cadastrada.</p>}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className={cardClass}>
-              <CardHeader>
-                <CardTitle className="font-heading text-2xl font-normal">Memórias gerais de comportamento</CardTitle>
-                <CardDescription>Orientações adicionais usadas no prompt do chat.</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <form className="flex flex-col gap-2 md:flex-row" onSubmit={saveBehaviorMemory}>
-                  <Input value={behaviorContent} onChange={(event) => setBehaviorContent(event.target.value)} placeholder="Nova orientação" />
-                  <Button type="submit">{behaviorEditId ? "Atualizar" : "Salvar"}</Button>
-                  {behaviorEditId ? (
-                    <Button
+                <div className="grid gap-2 md:grid-cols-2">
+                  <Input value={provider.name} onChange={(event) => updateProvider(provider.id, { name: event.target.value })} placeholder="Nome" />
+                  <Input value={provider.modelAlias ?? ""} onChange={(event) => updateProvider(provider.id, { modelAlias: event.target.value })} placeholder="Alias do modelo" />
+                  <Input value={provider.endpointUrl ?? ""} onChange={(event) => updateProvider(provider.id, { endpointUrl: event.target.value })} placeholder="Endpoint URL" />
+                  <div className="relative">
+                    <Input
+                      type={showKeys[provider.id] ? "text" : "password"}
+                      value={provider.apiKey ?? ""}
+                      onChange={(event) => updateProvider(provider.id, { apiKey: event.target.value })}
+                      placeholder={provider.hasApiKey ? "Nova API key" : "API key"}
+                      className="pr-10"
+                    />
+                    <button
                       type="button"
-                      variant="outline"
-                      onClick={() => {
-                        setBehaviorEditId(null);
-                        setBehaviorContent("");
-                      }}
+                      onClick={() => setShowKeys((items) => ({ ...items, [provider.id]: !items[provider.id] }))}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      tabIndex={-1}
                     >
+                      {showKeys[provider.id] ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {provider.kind === "ollama" && ollamaModels[provider.id]?.length ? (
+                    <Select value={provider.model} onValueChange={(value) => updateProvider(provider.id, { model: value || provider.model })}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Modelo Ollama" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ollamaModels[provider.id].map((model) => (
+                          <SelectItem key={model} value={model}>{model}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input value={provider.model} onChange={(event) => updateProvider(provider.id, { model: event.target.value })} placeholder="Modelo" />
+                  )}
+                  <Select value={provider.enabled ? "yes" : "no"} onValueChange={(value) => updateProvider(provider.id, { enabled: value === "yes" })}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Ativo</SelectItem>
+                      <SelectItem value="no">Inativo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {provider.kind === "ollama" ? (
+                    <Button type="button" variant="outline" size="sm" onClick={() => void fetchOllamaModels(provider)}>
+                      Buscar modelos
+                    </Button>
+                  ) : null}
+                  <Button type="button" size="sm" onClick={() => void saveProvider(provider)}>Salvar</Button>
+                </div>
+              </div>
+            ))}
+
+            <div className="grid gap-3 rounded-lg border border-dashed border-border bg-card/50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Plus className="size-4" />
+                Novo provedor
+              </div>
+              <div className="grid gap-2 md:grid-cols-2">
+                <Select value={newProvider.kind} onValueChange={(value) => setNewProvider((item) => ({ ...item, kind: value as Provider["kind"] }))}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="custom">Compatível OpenAI</SelectItem>
+                    <SelectItem value="ollama">Ollama</SelectItem>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="anthropic">Anthropic</SelectItem>
+                    <SelectItem value="google">Google</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input value={newProvider.name} onChange={(event) => setNewProvider((item) => ({ ...item, name: event.target.value }))} placeholder="Nome" />
+                <Input value={newProvider.endpointUrl ?? ""} onChange={(event) => setNewProvider((item) => ({ ...item, endpointUrl: event.target.value }))} placeholder="Endpoint URL" />
+                <Input value={newProvider.apiKey ?? ""} onChange={(event) => setNewProvider((item) => ({ ...item, apiKey: event.target.value }))} placeholder="API key" />
+                <Input value={newProvider.model} onChange={(event) => setNewProvider((item) => ({ ...item, model: event.target.value }))} placeholder="Modelo" />
+                <Input value={newProvider.modelAlias ?? ""} onChange={(event) => setNewProvider((item) => ({ ...item, modelAlias: event.target.value }))} placeholder="Alias" />
+              </div>
+              <div>
+                <Button type="button" size="sm" onClick={() => void saveProvider(newProvider)}>Adicionar</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Users tab */}
+        {tab === "users" && user.role === "admin" && (
+          <div className="grid gap-3">
+            {users.map((item) => (
+              <div key={item.id} className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-medium">{item.name}</p>
+                  <p className="text-xs text-muted-foreground">{item.email} · {item.role === "admin" ? "Administrador" : "Usuário"}</p>
+                </div>
+                <Select
+                  defaultValue={item.modelOverrideProviderId ?? "none"}
+                  onValueChange={(value) => void saveOverride(item.id, value || "none")}
+                >
+                  <SelectTrigger className="w-full md:w-[320px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Usar padrão do tenant</SelectItem>
+                    {providers.filter((provider) => provider.enabled).map((provider) => (
+                      <SelectItem key={provider.id} value={provider.id}>{modelLabel(provider)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Memories tab */}
+        {tab === "memories" && (
+          <div className="grid gap-6">
+            {/* User memories */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold">Memórias do usuário</CardTitle>
+                <CardDescription>Fatos, preferências e decisões pessoais.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <form className="flex flex-col gap-2 md:flex-row" onSubmit={saveUserMemory}>
+                  <Select value={memoryType} onValueChange={(value) => setMemoryType(value as UserMemory["type"])}>
+                    <SelectTrigger className="w-full md:w-[140px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fact">Fato</SelectItem>
+                      <SelectItem value="preference">Preferência</SelectItem>
+                      <SelectItem value="decision">Decisão</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {user.role === "admin" ? (
+                    <Select value={memoryUserId} onValueChange={(value) => setMemoryUserId(value || user.id)}>
+                      <SelectTrigger className="w-full md:w-[160px]"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {users.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  ) : null}
+                  <Input value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)} placeholder="Conteúdo da memória" className="flex-1" />
+                  <Button type="submit" size="sm">{memoryEditId ? "Atualizar" : "Salvar"}</Button>
+                  {memoryEditId ? (
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setMemoryEditId(null); setMemoryContent(""); setMemoryUserId(user.id); setMemoryType("fact"); }}>
                       Cancelar
                     </Button>
                   ) : null}
                 </form>
                 <div className="grid gap-2">
-                  {behaviorMemories.length ? behaviorMemories.map((memory) => (
-                    <div key={memory.id} className="flex items-start justify-between gap-3 rounded-xl border border-border/80 bg-background/40 p-4">
-                      <div>
+                  {userMemories.length ? userMemories.map((memory) => (
+                    <div key={memory.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/50 p-3">
+                      <div className="min-w-0">
                         <p className="text-sm">{memory.content}</p>
-                        <p className="text-xs text-muted-foreground">{memory.summary}</p>
+                        <p className="text-xs text-muted-foreground">{memory.userName ? `${memory.userName} · ` : ""}{memory.type}</p>
                       </div>
-                      <div className="flex gap-1">
-                        <Button type="button" variant="outline" size="sm" onClick={() => editBehaviorMemory(memory)}>
-                          Editar
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" onClick={() => void deleteBehaviorMemory(memory.id)} aria-label="Excluir comportamento">
-                          <Trash2 className="size-4" />
+                      <div className="flex gap-1 shrink-0">
+                        <Button type="button" variant="outline" size="sm" onClick={() => editUserMemory(memory)}>Editar</Button>
+                        <Button type="button" variant="ghost" size="icon" onClick={() => void deleteUserMemory(memory.id)} aria-label="Excluir">
+                          <Trash2 className="size-3.5" />
                         </Button>
                       </div>
                     </div>
-                  )) : <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nenhuma memória de comportamento cadastrada.</p>}
+                  )) : <p className="text-sm text-muted-foreground">Nenhuma memória cadastrada.</p>}
                 </div>
               </CardContent>
             </Card>
-          </>
-        ) : null}
+
+            {/* Org memories */}
+            {user.role === "admin" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg font-semibold">Memórias organizacionais</CardTitle>
+                  <CardDescription>Documentos, links e referências do tenant.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4">
+                  <form className="grid gap-3" onSubmit={saveOrgMemory}>
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <Input value={orgTitle} onChange={(e) => setOrgTitle(e.target.value)} placeholder="Título" required />
+                      <Select value={orgSourceType} onValueChange={(value) => setOrgSourceType(value as "text" | "markdown" | "link")}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="text">Texto</SelectItem>
+                          <SelectItem value="markdown">Markdown</SelectItem>
+                          <SelectItem value="link">Link</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {orgSourceType === "link" ? (
+                        <Input value={orgUrl} onChange={(e) => setOrgUrl(e.target.value)} placeholder="https://..." />
+                      ) : null}
+                    </div>
+                    <textarea
+                      value={orgContent}
+                      onChange={(e) => setOrgContent(e.target.value)}
+                      placeholder={orgSourceType === "link" ? "Descrição ou resumo do link" : "Conteúdo"}
+                      className="min-h-20 rounded-lg border border-input bg-background px-3 py-2 text-sm leading-6 outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                    />
+                    <div>
+                      <Button type="submit" size="sm">Criar memória</Button>
+                    </div>
+                  </form>
+                  <div className="grid gap-2">
+                    {orgMemories.length ? orgMemories.map((memory) => (
+                      <div key={memory.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/50 p-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{memory.title}</p>
+                          <p className="text-xs text-muted-foreground">{memory.sourceType}{memory.tags ? ` · ${memory.tags}` : ""}</p>
+                        </div>
+                        <Button type="button" variant="ghost" size="icon" onClick={() => void deleteOrgMemory(memory.id)} aria-label="Excluir">
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    )) : <p className="text-sm text-muted-foreground">Nenhuma memória organizacional.</p>}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Behavior memories */}
+            {user.role === "admin" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg font-semibold">Comportamento</CardTitle>
+                  <CardDescription>Diretrizes adicionais usadas no prompt do chat.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4">
+                  <form className="flex flex-col gap-2 md:flex-row" onSubmit={saveBehaviorMemory}>
+                    <Input value={behaviorContent} onChange={(event) => setBehaviorContent(event.target.value)} placeholder="Nova diretriz" className="flex-1" />
+                    <Button type="submit" size="sm">{behaviorEditId ? "Atualizar" : "Salvar"}</Button>
+                    {behaviorEditId ? (
+                      <Button type="button" variant="outline" size="sm" onClick={() => { setBehaviorEditId(null); setBehaviorContent(""); }}>
+                        Cancelar
+                      </Button>
+                    ) : null}
+                  </form>
+                  <div className="grid gap-2">
+                    {behaviorMemories.length ? behaviorMemories.map((memory) => (
+                      <div key={memory.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/50 p-3">
+                        <div className="min-w-0">
+                          <p className="text-sm">{memory.content}</p>
+                          <p className="text-xs text-muted-foreground">{memory.summary}</p>
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <Button type="button" variant="outline" size="sm" onClick={() => editBehaviorMemory(memory)}>Editar</Button>
+                          <Button type="button" variant="ghost" size="icon" onClick={() => void deleteBehaviorMemory(memory.id)} aria-label="Excluir">
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    )) : <p className="text-sm text-muted-foreground">Nenhuma diretriz cadastrada.</p>}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* Non-admin sees only memories tab */}
+        {tab !== "memories" && user.role !== "admin" && (
+          <p className="text-sm text-muted-foreground">Você não tem permissão para acessar esta seção.</p>
+        )}
       </div>
     </main>
   );

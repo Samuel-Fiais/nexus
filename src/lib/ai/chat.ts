@@ -7,7 +7,17 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText, stepCountIs, streamText, tool, type LanguageModel } from "ai";
 import { z } from "zod";
 import type { BehaviorMemoryRecord, OrgMemoryRecord, ProviderRecord, SessionUser, TenantRecord, UserMemoryRecord } from "@/lib/db";
-import { upsertUserMemory, listUserMemories } from "@/lib/db";
+import {
+  upsertUserMemory,
+  listUserMemories,
+  upsertBehaviorMemory,
+  listBehaviorMemories,
+  insertOrgMemory,
+  listOrgMemories,
+  deleteUserMemory,
+  deleteBehaviorMemory,
+  deleteOrgMemory,
+} from "@/lib/db";
 
 export type CoreMessage = {
   role: "system" | "user" | "assistant";
@@ -130,19 +140,31 @@ export function buildSystemPrompt(context: ChatContext) {
     liveLinks.length ? `Links consultados ao vivo nesta conversa:\n${liveLinks.join("\n")}` : "",
     "",
     "## Ferramentas disponíveis",
-    "Você tem acesso às seguintes ferramentas para gerenciar memórias do usuário:",
+    "Você tem acesso às seguintes ferramentas para gerenciar memórias:",
     "",
-    "1. `save_user_memory` — Salva uma memória do usuário (fato, preferência ou decisão).",
-    "   Use quando o usuário pedir explicitamente para lembrar algo, ou quando você identificar",
-    "   informação relevante que deve ser persistida entre conversas.",
-    "   Parâmetros: type (fact|preference|decision), content (texto da memória).",
+    "### Memórias do usuário (fatos, preferências, decisões pessoais)",
+    "- `save_user_memory(type, content)` — Salva uma memória pessoal do usuário.",
+    "  Use quando o usuário compartilhar informações pessoais, preferências, ou pedir para lembrar algo.",
+    "  **Identifique automaticamente**: se o usuário diz 'meu nome é X', 'gosto de Y', 'trabalho com Z'",
+    "  — salve como memória. Não espere ele pedir.",
+    "- `get_user_memories(type?, query?)` — Busca memórias do usuário.",
+    "- `delete_user_memory(id)` — Remove uma memória do usuário.",
     "",
-    "2. `get_user_memories` — Busca memórias do usuário por tipo ou palavra-chave.",
-    "   Use quando precisar consultar informações salvas anteriormente.",
-    "   Parâmetros: type (opcional, fact|preference|decision), query (opcional, texto para busca).",
+    "### Memórias organizacionais (documentos, links, referências do tenant)",
+    "- `save_org_memory(title, content, sourceType, url?)` — Adiciona uma memória organizacional.",
+    "  Use quando o usuário pedir para salvar um documento, link ou informação relevante ao negócio.",
+    "- `get_org_memories(query?)` — Busca memórias organizacionais.",
+    "- `delete_org_memory(id)` — Remove uma memória organizacional.",
     "",
-    "Sempre que o usuário disser algo como 'salve isso', 'lembre disso', 'guarda essa informação',",
-    "use save_user_memory. Não apenas confirme verbalmente — execute a ferramenta.",
+    "### Memórias de comportamento (diretrizes gerais do assistente)",
+    "- `save_behavior_memory(content)` — Adiciona uma diretriz de comportamento.",
+    "  Use quando o usuário disser como o assistente deve se comportar ou responder.",
+    "- `get_behavior_memories(query?)` — Busca diretrizes de comportamento.",
+    "- `delete_behavior_memory(id)` — Remove uma diretriz.",
+    "",
+    "**IMPORTANTE**: Sempre que o usuário compartilhar uma informação pessoal relevante",
+    "(nome, preferência, gosto, trabalho, contato, decisão), use save_user_memory automaticamente.",
+    "Não apenas confirme verbalmente — execute a ferramenta.",
   ]);
 }
 
@@ -190,8 +212,9 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
       system: buildSystemPrompt(context),
       messages,
       tools: {
+        // ── User memories ──
         save_user_memory: tool({
-          description: "Salva uma memória do usuário (fato, preferência ou decisão). Use quando o usuário pedir para lembrar algo.",
+          description: "Salva uma memória do usuário (fato, preferência ou decisão). Use automaticamente quando o usuário compartilhar informações pessoais.",
           inputSchema: z.object({
             type: z.enum(["fact", "preference", "decision"]).describe("Tipo da memória"),
             content: z.string().min(1).describe("Conteúdo da memória a ser salva"),
@@ -216,6 +239,97 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
               filtered = filtered.filter((m) => m.content.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q) || m.tags.toLowerCase().includes(q));
             }
             return filtered.slice(0, 10).map((m) => `[${m.type}] ${m.summary || m.content}`).join("\n") || "Nenhuma memória encontrada.";
+          },
+        }),
+        delete_user_memory: tool({
+          description: "Remove uma memória do usuário pelo ID.",
+          inputSchema: z.object({
+            id: z.string().min(1).describe("ID da memória a ser removida"),
+          }),
+          execute: async ({ id }) => {
+            deleteUserMemory(context.user, id);
+            return "Memória removida.";
+          },
+        }),
+
+        // ── Org memories ──
+        save_org_memory: tool({
+          description: "Adiciona uma memória organizacional (documento, link, texto). Requer role admin.",
+          inputSchema: z.object({
+            title: z.string().min(1).describe("Título da memória"),
+            content: z.string().min(1).describe("Conteúdo da memória"),
+            sourceType: z.enum(["text", "markdown", "link"]).describe("Tipo de conteúdo"),
+            url: z.string().optional().describe("URL opcional"),
+          }),
+          execute: async ({ title, content, sourceType, url }) => {
+            if (context.user.role !== "admin") return "Apenas administradores podem criar memórias organizacionais.";
+            insertOrgMemory(context.user, { title, content, sourceType, url: url ?? null, tags: "", summary: "", filePath: null, fileName: null, mimeType: null });
+            return `Memória organizacional "${title}" criada.`;
+          },
+        }),
+        get_org_memories: tool({
+          description: "Busca memórias organizacionais por palavra-chave.",
+          inputSchema: z.object({
+            query: z.string().optional().describe("Palavra-chave para buscar"),
+          }),
+          execute: async ({ query }) => {
+            const memories = listOrgMemories(context.user.tenantId);
+            let filtered = memories;
+            if (query) {
+              const q = query.toLowerCase();
+              filtered = filtered.filter((m) => m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q) || m.tags.toLowerCase().includes(q));
+            }
+            return filtered.slice(0, 10).map((m) => `[${m.sourceType}] ${m.title}: ${truncateText(m.summary || m.content, 200)}`).join("\n") || "Nenhuma memória organizacional encontrada.";
+          },
+        }),
+        delete_org_memory: tool({
+          description: "Remove uma memória organizacional pelo ID. Requer role admin.",
+          inputSchema: z.object({
+            id: z.string().min(1).describe("ID da memória a ser removida"),
+          }),
+          execute: async ({ id }) => {
+            if (context.user.role !== "admin") return "Apenas administradores podem remover memórias organizacionais.";
+            deleteOrgMemory(context.user, id);
+            return "Memória organizacional removida.";
+          },
+        }),
+
+        // ── Behavior memories ──
+        save_behavior_memory: tool({
+          description: "Adiciona uma diretriz de comportamento para o assistente. Requer role admin.",
+          inputSchema: z.object({
+            content: z.string().min(1).describe("Conteúdo da diretriz de comportamento"),
+          }),
+          execute: async ({ content }) => {
+            if (context.user.role !== "admin") return "Apenas administradores podem criar diretrizes de comportamento.";
+            upsertBehaviorMemory(context.user, { content });
+            return "Diretriz de comportamento salva.";
+          },
+        }),
+        get_behavior_memories: tool({
+          description: "Busca diretrizes de comportamento por palavra-chave.",
+          inputSchema: z.object({
+            query: z.string().optional().describe("Palavra-chave para buscar"),
+          }),
+          execute: async ({ query }) => {
+            const memories = listBehaviorMemories(context.user.tenantId);
+            let filtered = memories;
+            if (query) {
+              const q = query.toLowerCase();
+              filtered = filtered.filter((m) => m.content.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q));
+            }
+            return filtered.slice(0, 10).map((m) => `- ${m.summary || m.content}`).join("\n") || "Nenhuma diretriz encontrada.";
+          },
+        }),
+        delete_behavior_memory: tool({
+          description: "Remove uma diretriz de comportamento pelo ID. Requer role admin.",
+          inputSchema: z.object({
+            id: z.string().min(1).describe("ID da diretriz a ser removida"),
+          }),
+          execute: async ({ id }) => {
+            if (context.user.role !== "admin") return "Apenas administradores podem remover diretrizes de comportamento.";
+            deleteBehaviorMemory(context.user, id);
+            return "Diretriz de comportamento removida.";
           },
         }),
       },
