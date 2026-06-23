@@ -7,7 +7,10 @@ import { curateMemory } from "@/lib/ai/chat";
 
 export const runtime = "nodejs";
 
-const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
+const UPLOAD_DIR =
+  process.env.VERCEL_ENV === "production" || process.env.VERCEL_ENV === "preview"
+    ? "/tmp/nexus-uploads"
+    : path.join(process.cwd(), "data", "uploads");
 
 type OrgMemoryBody = {
   title?: string;
