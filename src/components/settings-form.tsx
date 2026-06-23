@@ -313,7 +313,7 @@ export function SettingsForm({
     setProviders((items) => items.map((provider) => (provider.id === id ? { ...provider, ...patch } : provider)));
   }
 
-  const cardClass = "border-border/80 bg-card/95 shadow-[0_18px_60px_rgb(70_50_30_/_0.08)]";
+  const cardClass = "border-border/80 bg-card/95 shadow-sm";
   const textareaClass = "rounded-xl border border-input bg-background/60 px-3 py-2 text-sm leading-6 outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
 
   return (

@@ -220,15 +220,6 @@ function migrate(database: DatabaseSync) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS auth_sessions (
-      id TEXT PRIMARY KEY,
-      token_hash TEXT NOT NULL UNIQUE,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
     CREATE TABLE IF NOT EXISTS providers (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
