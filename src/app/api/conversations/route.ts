@@ -5,11 +5,11 @@ export const runtime = "nodejs";
 
 export async function GET() {
   const user = await requireUser();
-  return Response.json({ conversations: listConversations(user) });
+  return Response.json({ conversations: await listConversations(user) });
 }
 
 export async function POST() {
   const user = await requireUser();
-  const id = createConversation(user);
+  const id = await createConversation(user);
   return Response.json({ id });
 }

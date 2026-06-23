@@ -12,17 +12,17 @@ import {
 
 export default async function SettingsPage() {
   const user = await requireUser();
-  const tenant = getTenant(user.tenantId);
+  const tenant = await getTenant(user.tenantId);
 
   return (
     <SettingsForm
       user={user}
       tenant={tenant}
-      users={user.role === "admin" ? listUsers(user.tenantId) : []}
-      providers={user.role === "admin" ? listProviders(user.tenantId).map(toPublicProvider) : []}
-      userMemories={listUserMemories(user)}
-      orgMemories={user.role === "admin" ? listOrgMemories(user.tenantId) : []}
-      behaviorMemories={user.role === "admin" ? listBehaviorMemories(user.tenantId) : []}
+      users={user.role === "admin" ? await listUsers(user.tenantId) : []}
+      providers={user.role === "admin" ? (await listProviders(user.tenantId)).map(toPublicProvider) : []}
+      userMemories={await listUserMemories(user)}
+      orgMemories={user.role === "admin" ? await listOrgMemories(user.tenantId) : []}
+      behaviorMemories={user.role === "admin" ? await listBehaviorMemories(user.tenantId) : []}
     />
   );
 }

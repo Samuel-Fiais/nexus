@@ -6,6 +6,6 @@ export const runtime = "nodejs";
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requireAdmin();
   const { id } = await context.params;
-  deleteOrgMemory(user, id);
+  await deleteOrgMemory(user, id);
   return Response.json({ ok: true });
 }

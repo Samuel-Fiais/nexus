@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 
 type AuthBody = {
   email?: string;
+  password?: string;
 };
 
 function actionFromUrl(request: Request) {
@@ -34,10 +35,12 @@ export async function POST(request: Request) {
   if (action === "login") {
     const body = await readJson<AuthBody>(request);
     const email = body?.email?.trim();
+    const password = body?.password ?? "";
     if (!email || !email.includes("@")) return jsonError("Informe um e-mail válido.");
+    if (!password) return jsonError("Informe a senha.");
 
-    const user = await signInWithEmail(email);
-    if (!user) return jsonError("Usuário não encontrado para este tenant.", 401);
+    const user = await signInWithEmail(email, password);
+    if (!user) return jsonError("E-mail ou senha inválidos.", 401);
     return Response.json({ user });
   }
 

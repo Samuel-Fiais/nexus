@@ -2,6 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import bcrypt from "bcryptjs";
 import { SESSION_COOKIE } from "@/lib/session-cookie";
 import { createToken, verifyToken, type JwtPayload } from "@/lib/jwt";
 
@@ -35,11 +36,13 @@ function cookieOptions() {
   };
 }
 
-export async function signInWithEmail(email: string) {
+export async function signInWithEmail(email: string, password: string) {
   // Import db lazily to avoid circular deps
   const { findUserByEmail } = await import("@/lib/db");
-  const user = findUserByEmail(email);
+  const user = await findUserByEmail(email);
   if (!user) return null;
+  const passwordOk = await bcrypt.compare(password, user.passwordHash);
+  if (!passwordOk) return null;
 
   const token = createToken(user);
   const cookieStore = await cookies();

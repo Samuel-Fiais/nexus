@@ -21,7 +21,8 @@ function validKind(kind: unknown): kind is ProviderKind {
 
 export async function GET() {
   const user = await requireAdmin();
-  return Response.json({ providers: listProviders(user.tenantId).map(toPublicProvider) });
+  const providers = await listProviders(user.tenantId);
+  return Response.json({ providers: providers.map(toPublicProvider) });
 }
 
 export async function POST(request: Request) {
@@ -35,12 +36,13 @@ export async function POST(request: Request) {
     return jsonError("Informe a URL do endpoint.");
   }
 
-  const id = upsertProvider(user.tenantId, {
+  const existingProvider = body.apiKey === undefined && body.id ? await getProvider(user.tenantId, body.id) : null;
+  const id = await upsertProvider(user.tenantId, {
     id: body.id,
     kind: body.kind,
     name: body.name.trim(),
     endpointUrl: body.endpointUrl?.trim() || null,
-    apiKey: body.apiKey === undefined && body.id ? getProvider(user.tenantId, body.id)?.apiKey ?? null : body.apiKey ?? null,
+    apiKey: body.apiKey === undefined && body.id ? existingProvider?.apiKey ?? null : body.apiKey ?? null,
     model: body.model.trim(),
     modelAlias: body.modelAlias?.trim() || null,
     enabled: body.enabled ?? true,

@@ -137,7 +137,7 @@ function resolvedFromRecord(record: LiveLinkExtractionRecord): ResolvedLiveLink 
 
 export async function resolveLiveLinksForConversation(conversationId: string, urls: string[]) {
   const normalizedUrls = [...new Set(urls.map((url) => normalizeLiveLinkUrl(url)).filter((url): url is string => !!url))];
-  const cachedByUrl = new Map(listLiveLinkExtractions(conversationId).map((record) => [record.url, record]));
+  const cachedByUrl = new Map((await listLiveLinkExtractions(conversationId)).map((record) => [record.url, record]));
   const resolved = new Map<string, ResolvedLiveLink>();
 
   for (const url of normalizedUrls) {
@@ -148,7 +148,7 @@ export async function resolveLiveLinksForConversation(conversationId: string, ur
     }
 
     const live = await fetchLiveLinkText(url);
-    const stored = upsertLiveLinkExtraction(conversationId, { url, ...live });
+    const stored = await upsertLiveLinkExtraction(conversationId, { url, ...live });
     resolved.set(
       url,
       stored

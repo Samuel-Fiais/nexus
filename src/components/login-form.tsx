@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 export function LoginForm() {
   const router = useRouter();
   const [email, setEmail] = useState("admin@festpay.local");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -21,7 +22,7 @@ export function LoginForm() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, password }),
       });
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -57,8 +58,16 @@ export function LoginForm() {
             autoComplete="email"
             className="h-12 bg-background/60"
           />
+          <Input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Senha"
+            autoComplete="current-password"
+            className="h-12 bg-background/60"
+          />
           <div className="rounded-xl border border-border/70 bg-muted/70 p-3 text-xs leading-5 text-muted-foreground">
-            Usuários seed: admin@festpay.local e usuario@festpay.local
+            Usuários seed: admin@festpay.local / admin123 e usuario@festpay.local / user123
           </div>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <Button type="submit" className="h-12 shadow-sm" disabled={pending}>

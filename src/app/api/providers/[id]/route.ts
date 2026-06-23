@@ -6,6 +6,6 @@ export const runtime = "nodejs";
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requireAdmin();
   const { id } = await context.params;
-  deleteProvider(user.tenantId, id);
+  await deleteProvider(user.tenantId, id);
   return Response.json({ ok: true });
 }

@@ -7,14 +7,14 @@ export const runtime = "nodejs";
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await context.params;
-  const conversation = getConversation(user, id);
+  const conversation = await getConversation(user, id);
   if (!conversation) return jsonError("Conversa não encontrada.", 404);
-  return Response.json({ conversation, messages: listMessages(user, id) });
+  return Response.json({ conversation, messages: await listMessages(user, id) });
 }
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await context.params;
-  deleteConversation(user, id);
+  await deleteConversation(user, id);
   return Response.json({ ok: true });
 }

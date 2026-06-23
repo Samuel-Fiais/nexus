@@ -11,11 +11,11 @@ import {
 
 export default async function Home() {
   const user = await requireUser();
-  const tenant = getTenant(user.tenantId);
-  const conversations = listConversations(user);
+  const tenant = await getTenant(user.tenantId);
+  const conversations = await listConversations(user);
   const activeConversation = conversations[0] ?? null;
-  const providers = listProviders(user.tenantId).map(toPublicProvider);
-  const resolvedProvider = resolveProviderForUser(user);
+  const providers = (await listProviders(user.tenantId)).map(toPublicProvider);
+  const resolvedProvider = await resolveProviderForUser(user);
 
   return (
     <ChatWorkspace
@@ -25,7 +25,7 @@ export default async function Home() {
       resolvedProvider={resolvedProvider ? toPublicProvider(resolvedProvider) : null}
       conversations={conversations}
       initialConversationId={activeConversation?.id ?? ""}
-      initialMessages={activeConversation ? listMessages(user, activeConversation.id) : []}
+      initialMessages={activeConversation ? await listMessages(user, activeConversation.id) : []}
     />
   );
 }

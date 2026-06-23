@@ -18,7 +18,7 @@ type OrgMemoryBody = {
 
 export async function GET() {
   const user = await requireAdmin();
-  return Response.json({ memories: listOrgMemories(user.tenantId) });
+  return Response.json({ memories: await listOrgMemories(user.tenantId) });
 }
 
 export async function POST(request: Request) {
@@ -74,11 +74,11 @@ export async function POST(request: Request) {
   }
   if (!content) return jsonError("Informe conteúdo, link ou arquivo.");
 
-  const tenant = getTenant(user.tenantId);
-  const provider = tenant ? resolveProviderForUser(user) : null;
+  const tenant = await getTenant(user.tenantId);
+  const provider = tenant ? await resolveProviderForUser(user) : null;
   const curated = await curateMemory(content, provider);
 
-  const id = insertOrgMemory(user, {
+  const id = await insertOrgMemory(user, {
     title,
     sourceType: sourceType as "text" | "link" | "pdf" | "image",
     content,

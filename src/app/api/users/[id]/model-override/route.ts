@@ -14,9 +14,10 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
   const body = await readJson<Body>(request);
   if (!body) return jsonError("JSON inválido.");
   const providerId = body.providerId || null;
-  if (providerId && !listProviders(user.tenantId).some((provider) => provider.id === providerId)) {
+  const providers = await listProviders(user.tenantId);
+  if (providerId && !providers.some((provider) => provider.id === providerId)) {
     return jsonError("Modelo inválido.");
   }
-  updateUserModelOverride(user.tenantId, id, providerId);
+  await updateUserModelOverride(user.tenantId, id, providerId);
   return Response.json({ ok: true });
 }

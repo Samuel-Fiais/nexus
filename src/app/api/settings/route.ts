@@ -21,17 +21,18 @@ type SettingsBody = {
 
 export async function GET() {
   const user = await requireUser();
-  const tenant = getTenant(user.tenantId);
+  const tenant = await getTenant(user.tenantId);
   if (!tenant) return jsonError("Tenant não encontrado.", 404);
+  const providers = user.role === "admin" ? await listProviders(user.tenantId) : [];
 
   return Response.json({
     user,
     tenant,
-    users: user.role === "admin" ? listUsers(user.tenantId) : [],
-    providers: user.role === "admin" ? listProviders(user.tenantId).map(toPublicProvider) : [],
-    userMemories: listUserMemories(user),
-    orgMemories: user.role === "admin" ? listOrgMemories(user.tenantId) : [],
-    behaviorMemories: user.role === "admin" ? listBehaviorMemories(user.tenantId) : [],
+    users: user.role === "admin" ? await listUsers(user.tenantId) : [],
+    providers: providers.map(toPublicProvider),
+    userMemories: await listUserMemories(user),
+    orgMemories: user.role === "admin" ? await listOrgMemories(user.tenantId) : [],
+    behaviorMemories: user.role === "admin" ? await listBehaviorMemories(user.tenantId) : [],
   });
 }
 
@@ -41,11 +42,12 @@ export async function PUT(request: Request) {
   if (!body) return jsonError("JSON inválido.");
 
   const defaultProviderId = body.defaultProviderId || null;
-  if (defaultProviderId && !listProviders(user.tenantId).some((provider) => provider.id === defaultProviderId)) {
+  const providers = await listProviders(user.tenantId);
+  if (defaultProviderId && !providers.some((provider) => provider.id === defaultProviderId)) {
     return jsonError("Modelo padrão inválido.");
   }
 
-  setTenantSettings(user.tenantId, {
+  await setTenantSettings(user.tenantId, {
     soul: body.soul ?? "",
     generalBehavior: body.generalBehavior ?? "",
     defaultProviderId,

@@ -96,23 +96,23 @@ export async function POST(request: Request) {
   const content = body?.content?.trim();
   if (!content) return jsonError("Informe uma mensagem.");
 
-  const tenant = getTenant(user.tenantId);
+  const tenant = await getTenant(user.tenantId);
   if (!tenant) return jsonError("Tenant não encontrado.", 404);
 
   let conversationId = body?.conversationId;
-  if (!conversationId || !getConversation(user, conversationId)) {
-    conversationId = createConversation(user);
+  if (!conversationId || !(await getConversation(user, conversationId))) {
+    conversationId = await createConversation(user);
   }
 
-  const previousMessages = listMessages(user, conversationId);
+  const previousMessages = await listMessages(user, conversationId);
   const title = previousMessages.length === 0 ? content.slice(0, 60) : undefined;
-  insertMessage(conversationId, "user", content);
-  updateConversationAfterMessage(conversationId, title);
+  await insertMessage(conversationId, "user", content);
+  await updateConversationAfterMessage(conversationId, title);
 
-  const provider = resolveProviderForUser(user, body?.providerId ?? null);
-  const userMemories = listUserMemories(user, user.id);
-  const behaviorMemories = listBehaviorMemories(user.tenantId);
-  const allOrgMemories = listOrgMemories(user.tenantId);
+  const provider = await resolveProviderForUser(user, body?.providerId ?? null);
+  const userMemories = await listUserMemories(user, user.id);
+  const behaviorMemories = await listBehaviorMemories(user.tenantId);
+  const allOrgMemories = await listOrgMemories(user.tenantId);
   const liveLinkUrls = extractUrlsFromTexts(collectLiveLinkTexts(content, previousMessages, allOrgMemories, userMemories, behaviorMemories));
   const resolvedLinks = await resolveLiveLinksForConversation(conversationId, liveLinkUrls);
   const orgMemories = relevantOrgMemories(withLiveLinkMemories(allOrgMemories, resolvedLinks), content);
@@ -126,9 +126,9 @@ export async function POST(request: Request) {
   const response = createChatStream(
     messages,
     { tenant, provider, user, orgMemories, userMemories, behaviorMemories, liveLinks: liveLinksForPrompt(resolvedLinks) },
-    (assistantText) => {
-      insertMessage(conversationId, "assistant", assistantText);
-      updateConversationAfterMessage(conversationId);
+    async (assistantText) => {
+      await insertMessage(conversationId, "assistant", assistantText);
+      await updateConversationAfterMessage(conversationId);
     },
   );
   response.headers.set("x-conversation-id", conversationId);

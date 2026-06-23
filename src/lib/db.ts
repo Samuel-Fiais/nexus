@@ -1,9 +1,10 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import bcrypt from "bcryptjs";
+import { Pool, type QueryResultRow } from "@neondatabase/serverless";
 
 export type UserRole = "admin" | "user";
 export type ProviderKind = "openai" | "anthropic" | "google" | "ollama" | "custom";
@@ -46,6 +47,10 @@ export type TenantRecord = {
 
 export type UserRecord = SessionUser & {
   modelOverrideProviderId: string | null;
+};
+
+export type UserWithPasswordRecord = UserRecord & {
+  passwordHash: string;
 };
 
 export type ConversationRecord = {
@@ -115,22 +120,25 @@ export type LiveLinkExtractionRecord = {
   updatedAt: string;
 };
 
-type DbRow = Record<string, unknown>;
+type DbRow = QueryResultRow;
 
-const DATA_DIR =
+export const DATA_DIR =
   process.env.VERCEL_ENV === "production" || process.env.VERCEL_ENV === "preview"
     ? "/tmp/nexus-data"
     : path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "nexus.sqlite");
 
-let db: DatabaseSync | null = null;
+let pool: Pool | null = null;
+let initPromise: Promise<void> | null = null;
 
 function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : "";
+  if (typeof value === "string") return value;
+  if (value instanceof Date) return value.toISOString();
+  return value == null ? "" : String(value);
 }
 
 function nullableString(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
+  const valueString = stringValue(value);
+  return valueString.length > 0 ? valueString : null;
 }
 
 function roleValue(value: unknown): UserRole {
@@ -150,30 +158,45 @@ function memoryTypeValue(value: unknown): MemoryType {
 }
 
 function boolValue(value: unknown): boolean {
-  return value === 1 || value === true;
+  return value === true || value === 1 || value === "1";
 }
 
 function liveLinkStatusValue(value: unknown): LiveLinkExtractionRecord["status"] {
   return value === "success" ? "success" : "failed";
 }
 
-function row(value: unknown): DbRow | null {
-  return value && typeof value === "object" ? (value as DbRow) : null;
+async function one<T extends DbRow = DbRow>(sql: string, params: unknown[] = []) {
+  const result = await (await getDb()).query<T>(sql, params);
+  return result.rows[0] ?? null;
 }
 
-function rows(value: unknown[]): DbRow[] {
-  return value.filter((item): item is DbRow => !!row(item)).map((item) => item as DbRow);
+async function many<T extends DbRow = DbRow>(sql: string, params: unknown[] = []) {
+  const result = await (await getDb()).query<T>(sql, params);
+  return result.rows;
 }
 
-export function getDb() {
-  if (!db) {
-    mkdirSync(DATA_DIR, { recursive: true });
-    db = new DatabaseSync(DB_PATH);
-    db.exec("PRAGMA foreign_keys = ON;");
-    migrate(db);
-    seed(db);
+async function exec(sql: string, params: unknown[] = []) {
+  await (await getDb()).query(sql, params);
+}
+
+async function initialize(database: Pool) {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const schema = readFileSync(path.join(process.cwd(), "src/lib/schema.sql"), "utf8");
+  await database.query(schema);
+  await seed(database);
+}
+
+export async function getDb() {
+  if (!pool) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error("DATABASE_URL is required for Neon PostgreSQL.");
+    }
+    pool = new Pool({ connectionString });
   }
-  return db;
+  initPromise ??= initialize(pool);
+  await initPromise;
+  return pool;
 }
 
 export function normalizeLiveLinkUrl(value: string) {
@@ -197,159 +220,54 @@ export function normalizeLiveLinkUrl(value: string) {
   }
 }
 
-function migrate(database: DatabaseSync) {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS tenants (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      soul TEXT NOT NULL DEFAULT '',
-      general_behavior TEXT NOT NULL DEFAULT '',
-      default_provider_id TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+async function seed(database: Pool) {
+  const tenant = await database.query<{ id: string }>(
+    `INSERT INTO tenants (name, soul, general_behavior)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+     RETURNING id`,
+    [
+      "Festpay",
+      "Você é o Nexus da Festpay. Responda em português do Brasil, com objetividade, clareza e foco em operações financeiras.",
+      "Priorize respostas práticas, cite incertezas e evite inventar políticas internas.",
+    ],
+  );
+  const tenantId = tenant.rows[0].id;
+  const adminPasswordHash = await bcrypt.hash("admin123", 12);
+  const userPasswordHash = await bcrypt.hash("user123", 12);
 
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      email TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
-      model_override_provider_id TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+  await database.query(
+    `INSERT INTO users (tenant_id, email, name, role, password_hash)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (email) DO UPDATE SET
+       password_hash = CASE WHEN users.password_hash = '' THEN EXCLUDED.password_hash ELSE users.password_hash END,
+       updated_at = NOW()`,
+    [tenantId, "admin@festpay.local", "Administrador", "admin", adminPasswordHash],
+  );
 
-    CREATE TABLE IF NOT EXISTS providers (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL CHECK(kind IN ('openai', 'anthropic', 'google', 'ollama', 'custom')),
-      name TEXT NOT NULL,
-      endpoint_url TEXT,
-      api_key TEXT,
-      model TEXT NOT NULL DEFAULT '',
-      model_alias TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+  await database.query(
+    `INSERT INTO users (tenant_id, email, name, role, password_hash)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (email) DO UPDATE SET
+       password_hash = CASE WHEN users.password_hash = '' THEN EXCLUDED.password_hash ELSE users.password_hash END,
+       updated_at = NOW()`,
+    [tenantId, "usuario@festpay.local", "Usuário", "user", userPasswordHash],
+  );
 
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+  const providerCount = await database.query<{ total: string }>("SELECT COUNT(*) AS total FROM providers WHERE tenant_id = $1", [tenantId]);
+  if (Number(providerCount.rows[0]?.total ?? 0) > 0) return;
 
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-      role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
-      content TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS user_memories (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      type TEXT NOT NULL CHECK(type IN ('fact', 'preference', 'decision')),
-      content TEXT NOT NULL,
-      tags TEXT NOT NULL DEFAULT '',
-      summary TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS org_memories (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      source_type TEXT NOT NULL CHECK(source_type IN ('text', 'link', 'pdf', 'image')),
-      content TEXT NOT NULL,
-      url TEXT,
-      file_path TEXT,
-      file_name TEXT,
-      mime_type TEXT,
-      tags TEXT NOT NULL DEFAULT '',
-      summary TEXT NOT NULL DEFAULT '',
-      created_by TEXT NOT NULL REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS behavior_memories (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      content TEXT NOT NULL,
-      tags TEXT NOT NULL DEFAULT '',
-      summary TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS live_link_extractions (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-      url TEXT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
-      content TEXT NOT NULL DEFAULT '',
-      error TEXT,
-      fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(conversation_id, url)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_live_link_extractions_conversation
-      ON live_link_extractions(conversation_id);
-  `);
-}
-
-function seed(database: DatabaseSync) {
-  const existing = row(database.prepare("SELECT id FROM tenants WHERE name = ?").get("Festpay"));
-  const tenantId = existing ? stringValue(existing.id) : randomUUID();
-
-  if (!existing) {
-    database
-      .prepare("INSERT INTO tenants (id, name, soul, general_behavior) VALUES (?, ?, ?, ?)")
-      .run(
-        tenantId,
-        "Festpay",
-        "Você é o Nexus da Festpay. Responda em português do Brasil, com objetividade, clareza e foco em operações financeiras.",
-        "Priorize respostas práticas, cite incertezas e evite inventar políticas internas.",
-      );
-  }
-
-  const adminEmail = "admin@festpay.local";
-  const userEmail = "usuario@festpay.local";
-
-  if (!row(database.prepare("SELECT id FROM users WHERE email = ?").get(adminEmail))) {
-    database
-      .prepare("INSERT INTO users (id, tenant_id, email, name, role) VALUES (?, ?, ?, ?, ?)")
-      .run(randomUUID(), tenantId, adminEmail, "Administrador", "admin");
-  }
-
-  if (!row(database.prepare("SELECT id FROM users WHERE email = ?").get(userEmail))) {
-    database
-      .prepare("INSERT INTO users (id, tenant_id, email, name, role) VALUES (?, ?, ?, ?, ?)")
-      .run(randomUUID(), tenantId, userEmail, "Usuário", "user");
-  }
-
-  const providerCount = row(database.prepare("SELECT COUNT(*) AS total FROM providers WHERE tenant_id = ?").get(tenantId));
-  if (Number(providerCount?.total ?? 0) === 0) {
-    const ollamaId = randomUUID();
-    const insertProvider = database.prepare(
-      "INSERT INTO providers (id, tenant_id, kind, name, endpoint_url, api_key, model, model_alias, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    );
-    insertProvider.run(randomUUID(), tenantId, "openai", "OpenAI", null, "", "gpt-4o-mini", "GPT-4o Mini", 0);
-    insertProvider.run(randomUUID(), tenantId, "anthropic", "Anthropic", null, "", "claude-sonnet-4", "Claude Sonnet 4", 0);
-    insertProvider.run(randomUUID(), tenantId, "google", "Google", null, "", "gemini-2.0-flash", "Gemini Flash", 0);
-    insertProvider.run(ollamaId, tenantId, "ollama", "Ollama local", "http://localhost:11434", "", "llama3.2", "Llama 3.2", 1);
-    database.prepare("UPDATE tenants SET default_provider_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(ollamaId, tenantId);
-  }
+  const ollamaId = randomUUID();
+  await database.query(
+    `INSERT INTO providers (id, tenant_id, kind, name, endpoint_url, api_key, model, model_alias, enabled)
+     VALUES
+       (gen_random_uuid(), $1, 'openai', 'OpenAI', NULL, '', 'gpt-4o-mini', 'GPT-4o Mini', false),
+       (gen_random_uuid(), $1, 'anthropic', 'Anthropic', NULL, '', 'claude-sonnet-4', 'Claude Sonnet 4', false),
+       (gen_random_uuid(), $1, 'google', 'Google', NULL, '', 'gemini-2.0-flash', 'Gemini Flash', false),
+       ($2, $1, 'ollama', 'Ollama local', 'http://localhost:11434', '', 'llama3.2', 'Llama 3.2', true)`,
+    [tenantId, ollamaId],
+  );
+  await database.query("UPDATE tenants SET default_provider_id = $1, updated_at = NOW() WHERE id = $2", [ollamaId, tenantId]);
 }
 
 function mapTenant(item: DbRow): TenantRecord {
@@ -409,6 +327,13 @@ function mapUser(item: DbRow): UserRecord {
   return {
     ...mapSessionUser(item),
     modelOverrideProviderId: nullableString(item.model_override_provider_id),
+  };
+}
+
+function mapUserWithPassword(item: DbRow): UserWithPasswordRecord {
+  return {
+    ...mapUser(item),
+    passwordHash: stringValue(item.password_hash),
   };
 }
 
@@ -492,305 +417,252 @@ function mapLiveLinkExtraction(item: DbRow): LiveLinkExtractionRecord {
   };
 }
 
-export function findUserByEmail(email: string) {
-  const item = row(
-    getDb()
-      .prepare(
-        `SELECT users.*, tenants.name AS tenant_name
-         FROM users
-         JOIN tenants ON tenants.id = users.tenant_id
-         WHERE lower(users.email) = lower(?)`,
-      )
-      .get(email.trim()),
+export async function findUserByEmail(email: string) {
+  const item = await one(
+    `SELECT users.*, tenants.name AS tenant_name
+     FROM users
+     JOIN tenants ON tenants.id = users.tenant_id
+     WHERE lower(users.email) = lower($1)`,
+    [email.trim()],
   );
-  return item ? mapUser(item) : null;
+  return item ? mapUserWithPassword(item) : null;
 }
 
-export function findSessionByTokenHash(tokenHash: string) {
-  const item = row(
-    getDb()
-      .prepare(
-        `SELECT users.id, users.tenant_id, users.email, users.name, users.role, tenants.name AS tenant_name
-         FROM auth_sessions
-         JOIN users ON users.id = auth_sessions.user_id
-         JOIN tenants ON tenants.id = auth_sessions.tenant_id
-         WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > datetime('now')`,
-      )
-      .get(tokenHash),
-  );
-  return item ? mapSessionUser(item) : null;
-}
-
-export function insertAuthSession(tokenHash: string, user: SessionUser, expiresAt: Date) {
-  getDb()
-    .prepare("INSERT INTO auth_sessions (id, token_hash, tenant_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)")
-    .run(randomUUID(), tokenHash, user.tenantId, user.id, expiresAt.toISOString());
-}
-
-export function deleteAuthSession(tokenHash: string) {
-  getDb().prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(tokenHash);
-}
-
-export function getTenant(tenantId: string) {
-  const item = row(getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(tenantId));
+export async function getTenant(tenantId: string) {
+  const item = await one("SELECT * FROM tenants WHERE id = $1", [tenantId]);
   return item ? mapTenant(item) : null;
 }
 
-export function listUsers(tenantId: string) {
-  return rows(
-    getDb()
-      .prepare(
-        `SELECT users.*, tenants.name AS tenant_name
-         FROM users
-         JOIN tenants ON tenants.id = users.tenant_id
-         WHERE users.tenant_id = ?
-         ORDER BY role ASC, name ASC`,
-      )
-      .all(tenantId),
-  ).map(mapUser);
+export async function listUsers(tenantId: string) {
+  const items = await many(
+    `SELECT users.*, tenants.name AS tenant_name
+     FROM users
+     JOIN tenants ON tenants.id = users.tenant_id
+     WHERE users.tenant_id = $1
+     ORDER BY role ASC, name ASC`,
+    [tenantId],
+  );
+  return items.map(mapUser);
 }
 
-export function updateUserModelOverride(tenantId: string, userId: string, providerId: string | null) {
-  getDb()
-    .prepare("UPDATE users SET model_override_provider_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?")
-    .run(providerId, userId, tenantId);
+export async function updateUserModelOverride(tenantId: string, userId: string, providerId: string | null) {
+  await exec("UPDATE users SET model_override_provider_id = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3", [providerId, userId, tenantId]);
 }
 
-export function listProviders(tenantId: string) {
-  return rows(getDb().prepare("SELECT * FROM providers WHERE tenant_id = ? ORDER BY enabled DESC, name ASC").all(tenantId)).map(mapProvider);
+export async function listProviders(tenantId: string) {
+  return (await many("SELECT * FROM providers WHERE tenant_id = $1 ORDER BY enabled DESC, name ASC", [tenantId])).map(mapProvider);
 }
 
-export function getProvider(tenantId: string, providerId: string) {
-  const item = row(getDb().prepare("SELECT * FROM providers WHERE tenant_id = ? AND id = ?").get(tenantId, providerId));
+export async function getProvider(tenantId: string, providerId: string) {
+  const item = await one("SELECT * FROM providers WHERE tenant_id = $1 AND id = $2", [tenantId, providerId]);
   return item ? mapProvider(item) : null;
 }
 
-export function upsertProvider(tenantId: string, values: Partial<ProviderRecord> & { id?: string; kind: ProviderKind; name: string; model: string }) {
+export async function upsertProvider(tenantId: string, values: Partial<ProviderRecord> & { id?: string; kind: ProviderKind; name: string; model: string }) {
   const id = values.id || randomUUID();
-  const existing = values.id ? getProvider(tenantId, values.id) : null;
+  const existing = values.id ? await getProvider(tenantId, values.id) : null;
   if (existing) {
-    getDb()
-      .prepare(
-        `UPDATE providers
-         SET kind = ?, name = ?, endpoint_url = ?, api_key = ?, model = ?, model_alias = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND tenant_id = ?`,
-      )
-      .run(values.kind, values.name, values.endpointUrl ?? null, values.apiKey ?? null, values.model, values.modelAlias ?? null, values.enabled === false ? 0 : 1, id, tenantId);
+    await exec(
+      `UPDATE providers
+       SET kind = $1, name = $2, endpoint_url = $3, api_key = $4, model = $5, model_alias = $6, enabled = $7, updated_at = NOW()
+       WHERE id = $8 AND tenant_id = $9`,
+      [values.kind, values.name, values.endpointUrl ?? null, values.apiKey ?? null, values.model, values.modelAlias ?? null, values.enabled !== false, id, tenantId],
+    );
     return id;
   }
-  getDb()
-    .prepare(
-      `INSERT INTO providers (id, tenant_id, kind, name, endpoint_url, api_key, model, model_alias, enabled)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, tenantId, values.kind, values.name, values.endpointUrl ?? null, values.apiKey ?? null, values.model, values.modelAlias ?? null, values.enabled === false ? 0 : 1);
+  await exec(
+    `INSERT INTO providers (id, tenant_id, kind, name, endpoint_url, api_key, model, model_alias, enabled)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [id, tenantId, values.kind, values.name, values.endpointUrl ?? null, values.apiKey ?? null, values.model, values.modelAlias ?? null, values.enabled !== false],
+  );
   return id;
 }
 
-export function deleteProvider(tenantId: string, providerId: string) {
-  const database = getDb();
-  database.prepare("UPDATE tenants SET default_provider_id = NULL WHERE id = ? AND default_provider_id = ?").run(tenantId, providerId);
-  database.prepare("UPDATE users SET model_override_provider_id = NULL WHERE tenant_id = ? AND model_override_provider_id = ?").run(tenantId, providerId);
-  database.prepare("DELETE FROM providers WHERE tenant_id = ? AND id = ?").run(tenantId, providerId);
+export async function deleteProvider(tenantId: string, providerId: string) {
+  const database = await getDb();
+  await database.query("UPDATE tenants SET default_provider_id = NULL WHERE id = $1 AND default_provider_id = $2", [tenantId, providerId]);
+  await database.query("UPDATE users SET model_override_provider_id = NULL WHERE tenant_id = $1 AND model_override_provider_id = $2", [tenantId, providerId]);
+  await database.query("DELETE FROM providers WHERE tenant_id = $1 AND id = $2", [tenantId, providerId]);
 }
 
-export function setTenantSettings(tenantId: string, values: { soul: string; generalBehavior: string; defaultProviderId: string | null }) {
-  getDb()
-    .prepare("UPDATE tenants SET soul = ?, general_behavior = ?, default_provider_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-    .run(values.soul, values.generalBehavior, values.defaultProviderId, tenantId);
+export async function setTenantSettings(tenantId: string, values: { soul: string; generalBehavior: string; defaultProviderId: string | null }) {
+  await exec(
+    "UPDATE tenants SET soul = $1, general_behavior = $2, default_provider_id = $3, updated_at = NOW() WHERE id = $4",
+    [values.soul, values.generalBehavior, values.defaultProviderId, tenantId],
+  );
 }
 
-export function resolveProviderForUser(user: SessionUser, requestedProviderId?: string | null) {
-  const database = getDb();
-  const fullUser = row(database.prepare("SELECT model_override_provider_id FROM users WHERE id = ? AND tenant_id = ?").get(user.id, user.tenantId));
-  const tenant = getTenant(user.tenantId);
+export async function resolveProviderForUser(user: SessionUser, requestedProviderId?: string | null) {
+  const fullUser = await one("SELECT model_override_provider_id FROM users WHERE id = $1 AND tenant_id = $2", [user.id, user.tenantId]);
+  const tenant = await getTenant(user.tenantId);
   const providerId = user.role === "admin" && requestedProviderId
     ? requestedProviderId
     : nullableString(fullUser?.model_override_provider_id) ?? tenant?.defaultProviderId ?? null;
   if (!providerId) return null;
-  const provider = getProvider(user.tenantId, providerId);
+  const provider = await getProvider(user.tenantId, providerId);
   return provider?.enabled ? provider : null;
 }
 
-export function listConversations(user: SessionUser) {
-  return rows(
-    getDb()
-      .prepare("SELECT id, title, created_at, updated_at FROM conversations WHERE tenant_id = ? AND user_id = ? ORDER BY updated_at DESC")
-      .all(user.tenantId, user.id),
-  ).map(mapConversation);
+export async function listConversations(user: SessionUser) {
+  const items = await many(
+    "SELECT id, title, created_at, updated_at FROM conversations WHERE tenant_id = $1 AND user_id = $2 ORDER BY updated_at DESC",
+    [user.tenantId, user.id],
+  );
+  return items.map(mapConversation);
 }
 
-export function createConversation(user: SessionUser, title = "Nova conversa") {
+export async function createConversation(user: SessionUser, title = "Nova conversa") {
   const id = randomUUID();
-  getDb()
-    .prepare("INSERT INTO conversations (id, tenant_id, user_id, title) VALUES (?, ?, ?, ?)")
-    .run(id, user.tenantId, user.id, title);
+  await exec("INSERT INTO conversations (id, tenant_id, user_id, title) VALUES ($1, $2, $3, $4)", [id, user.tenantId, user.id, title]);
   return id;
 }
 
-export function getConversation(user: SessionUser, conversationId: string) {
-  const item = row(
-    getDb()
-      .prepare("SELECT * FROM conversations WHERE tenant_id = ? AND user_id = ? AND id = ?")
-      .get(user.tenantId, user.id, conversationId),
-  );
+export async function getConversation(user: SessionUser, conversationId: string) {
+  const item = await one("SELECT * FROM conversations WHERE tenant_id = $1 AND user_id = $2 AND id = $3", [user.tenantId, user.id, conversationId]);
   return item ? mapConversation(item) : null;
 }
 
-export function deleteConversation(user: SessionUser, conversationId: string) {
-  getDb()
-    .prepare("DELETE FROM conversations WHERE tenant_id = ? AND user_id = ? AND id = ?")
-    .run(user.tenantId, user.id, conversationId);
+export async function deleteConversation(user: SessionUser, conversationId: string) {
+  await exec("DELETE FROM conversations WHERE tenant_id = $1 AND user_id = $2 AND id = $3", [user.tenantId, user.id, conversationId]);
 }
 
-export function listMessages(user: SessionUser, conversationId: string) {
-  const conversation = getConversation(user, conversationId);
+export async function listMessages(user: SessionUser, conversationId: string) {
+  const conversation = await getConversation(user, conversationId);
   if (!conversation) return [];
-  return rows(
-    getDb()
-      .prepare("SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC")
-      .all(conversationId),
-  ).map(mapMessage);
+  return (await many("SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC", [conversationId])).map(mapMessage);
 }
 
-export function insertMessage(conversationId: string, role: MessageRecord["role"], content: string) {
+export async function insertMessage(conversationId: string, role: MessageRecord["role"], content: string) {
   const id = randomUUID();
-  getDb().prepare("INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)").run(id, conversationId, role, content);
+  await exec("INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)", [id, conversationId, role, content]);
   return id;
 }
 
-export function listLiveLinkExtractions(conversationId: string) {
-  return rows(
-    getDb()
-      .prepare("SELECT * FROM live_link_extractions WHERE conversation_id = ? ORDER BY fetched_at ASC")
-      .all(conversationId),
-  ).map(mapLiveLinkExtraction);
+export async function listLiveLinkExtractions(conversationId: string) {
+  return (await many("SELECT * FROM live_link_extractions WHERE conversation_id = $1 ORDER BY fetched_at ASC", [conversationId])).map(mapLiveLinkExtraction);
 }
 
-export function getLiveLinkExtraction(conversationId: string, url: string) {
+export async function getLiveLinkExtraction(conversationId: string, url: string) {
   const normalizedUrl = normalizeLiveLinkUrl(url);
   if (!normalizedUrl) return null;
-  const item = row(
-    getDb()
-      .prepare("SELECT * FROM live_link_extractions WHERE conversation_id = ? AND url = ?")
-      .get(conversationId, normalizedUrl),
-  );
+  const item = await one("SELECT * FROM live_link_extractions WHERE conversation_id = $1 AND url = $2", [conversationId, normalizedUrl]);
   return item ? mapLiveLinkExtraction(item) : null;
 }
 
-export function upsertLiveLinkExtraction(
+export async function upsertLiveLinkExtraction(
   conversationId: string,
   values: { url: string; status: LiveLinkExtractionRecord["status"]; content?: string; error?: string | null },
 ) {
   const normalizedUrl = normalizeLiveLinkUrl(values.url);
   if (!normalizedUrl) return null;
   const id = randomUUID();
-  getDb()
-    .prepare(
-      `INSERT INTO live_link_extractions (id, conversation_id, url, status, content, error, fetched_at)
-       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(conversation_id, url) DO UPDATE SET
-         status = excluded.status,
-         content = excluded.content,
-         error = excluded.error,
-         fetched_at = CURRENT_TIMESTAMP,
-         updated_at = CURRENT_TIMESTAMP`,
-    )
-    .run(id, conversationId, normalizedUrl, values.status, values.content ?? "", values.error ?? null);
-  return getLiveLinkExtraction(conversationId, normalizedUrl);
+  const item = await one(
+    `INSERT INTO live_link_extractions (id, conversation_id, url, status, content, error, fetched_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+     ON CONFLICT(conversation_id, url) DO UPDATE SET
+       status = EXCLUDED.status,
+       content = EXCLUDED.content,
+       error = EXCLUDED.error,
+       fetched_at = NOW(),
+       updated_at = NOW()
+     RETURNING *`,
+    [id, conversationId, normalizedUrl, values.status, values.content ?? "", values.error ?? null],
+  );
+  return item ? mapLiveLinkExtraction(item) : null;
 }
 
-export function updateConversationAfterMessage(conversationId: string, title?: string) {
-  getDb()
-    .prepare("UPDATE conversations SET title = COALESCE(?, title), updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-    .run(title ?? null, conversationId);
+export async function updateConversationAfterMessage(conversationId: string, title?: string) {
+  await exec("UPDATE conversations SET title = COALESCE($1, title), updated_at = NOW() WHERE id = $2", [title ?? null, conversationId]);
 }
 
-export function listUserMemories(user: SessionUser, targetUserId?: string) {
+export async function listUserMemories(user: SessionUser, targetUserId?: string) {
   const params: string[] = [user.tenantId];
   let sql = `
     SELECT user_memories.*, users.name AS user_name
     FROM user_memories
     JOIN users ON users.id = user_memories.user_id
-    WHERE user_memories.tenant_id = ?`;
+    WHERE user_memories.tenant_id = $1`;
   if (user.role !== "admin") {
-    sql += " AND user_memories.user_id = ?";
     params.push(user.id);
+    sql += ` AND user_memories.user_id = $${params.length}`;
   } else if (targetUserId) {
-    sql += " AND user_memories.user_id = ?";
     params.push(targetUserId);
+    sql += ` AND user_memories.user_id = $${params.length}`;
   }
   sql += " ORDER BY user_memories.updated_at DESC";
-  return rows(getDb().prepare(sql).all(...params)).map(mapUserMemory);
+  return (await many(sql, params)).map(mapUserMemory);
 }
 
-export function upsertUserMemory(user: SessionUser, values: { id?: string; userId?: string; type: MemoryType; content: string; tags?: string; summary?: string }) {
+export async function upsertUserMemory(user: SessionUser, values: { id?: string; userId?: string; type: MemoryType; content: string; tags?: string; summary?: string }) {
   const targetUserId = user.role === "admin" && values.userId ? values.userId : user.id;
   const id = values.id || randomUUID();
   const existing = values.id
-    ? row(getDb().prepare("SELECT id, user_id FROM user_memories WHERE id = ? AND tenant_id = ?").get(values.id, user.tenantId))
+    ? await one("SELECT id, user_id FROM user_memories WHERE id = $1 AND tenant_id = $2", [values.id, user.tenantId])
     : null;
   if (existing) {
     if (user.role !== "admin" && stringValue(existing.user_id) !== user.id) return null;
-    getDb()
-      .prepare("UPDATE user_memories SET type = ?, content = ?, tags = ?, summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?")
-      .run(values.type, values.content, values.tags ?? "", values.summary ?? "", id, user.tenantId);
+    await exec(
+      "UPDATE user_memories SET type = $1, content = $2, tags = $3, summary = $4, updated_at = NOW() WHERE id = $5 AND tenant_id = $6",
+      [values.type, values.content, values.tags ?? "", values.summary ?? "", id, user.tenantId],
+    );
     return id;
   }
-  getDb()
-    .prepare("INSERT INTO user_memories (id, tenant_id, user_id, type, content, tags, summary) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(id, user.tenantId, targetUserId, values.type, values.content, values.tags ?? "", values.summary ?? "");
+  await exec(
+    "INSERT INTO user_memories (id, tenant_id, user_id, type, content, tags, summary) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    [id, user.tenantId, targetUserId, values.type, values.content, values.tags ?? "", values.summary ?? ""],
+  );
   return id;
 }
 
-export function deleteUserMemory(user: SessionUser, memoryId: string) {
-  const existing = row(getDb().prepare("SELECT user_id FROM user_memories WHERE id = ? AND tenant_id = ?").get(memoryId, user.tenantId));
+export async function deleteUserMemory(user: SessionUser, memoryId: string) {
+  const existing = await one("SELECT user_id FROM user_memories WHERE id = $1 AND tenant_id = $2", [memoryId, user.tenantId]);
   if (!existing) return;
   if (user.role !== "admin" && stringValue(existing.user_id) !== user.id) return;
-  getDb().prepare("DELETE FROM user_memories WHERE id = ? AND tenant_id = ?").run(memoryId, user.tenantId);
+  await exec("DELETE FROM user_memories WHERE id = $1 AND tenant_id = $2", [memoryId, user.tenantId]);
 }
 
-export function listOrgMemories(tenantId: string) {
-  return rows(getDb().prepare("SELECT * FROM org_memories WHERE tenant_id = ? ORDER BY updated_at DESC").all(tenantId)).map(mapOrgMemory);
+export async function listOrgMemories(tenantId: string) {
+  return (await many("SELECT * FROM org_memories WHERE tenant_id = $1 ORDER BY updated_at DESC", [tenantId])).map(mapOrgMemory);
 }
 
-export function insertOrgMemory(user: SessionUser, values: Omit<OrgMemoryRecord, "id" | "tenantId" | "createdBy" | "createdAt" | "updatedAt">) {
+export async function insertOrgMemory(user: SessionUser, values: Omit<OrgMemoryRecord, "id" | "tenantId" | "createdBy" | "createdAt" | "updatedAt">) {
   const id = randomUUID();
-  getDb()
-    .prepare(
-      `INSERT INTO org_memories (id, tenant_id, title, source_type, content, url, file_path, file_name, mime_type, tags, summary, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, user.tenantId, values.title, values.sourceType, values.content, values.url, values.filePath, values.fileName, values.mimeType, values.tags, values.summary, user.id);
+  await exec(
+    `INSERT INTO org_memories (id, tenant_id, title, source_type, content, url, file_path, file_name, mime_type, tags, summary, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [id, user.tenantId, values.title, values.sourceType, values.content, values.url, values.filePath, values.fileName, values.mimeType, values.tags, values.summary, user.id],
+  );
   return id;
 }
 
-export function deleteOrgMemory(user: SessionUser, memoryId: string) {
+export async function deleteOrgMemory(user: SessionUser, memoryId: string) {
   if (user.role !== "admin") return;
-  getDb().prepare("DELETE FROM org_memories WHERE id = ? AND tenant_id = ?").run(memoryId, user.tenantId);
+  await exec("DELETE FROM org_memories WHERE id = $1 AND tenant_id = $2", [memoryId, user.tenantId]);
 }
 
-export function listBehaviorMemories(tenantId: string) {
-  return rows(getDb().prepare("SELECT * FROM behavior_memories WHERE tenant_id = ? ORDER BY updated_at DESC").all(tenantId)).map(mapBehaviorMemory);
+export async function listBehaviorMemories(tenantId: string) {
+  return (await many("SELECT * FROM behavior_memories WHERE tenant_id = $1 ORDER BY updated_at DESC", [tenantId])).map(mapBehaviorMemory);
 }
 
-export function upsertBehaviorMemory(user: SessionUser, values: { id?: string; content: string; tags?: string; summary?: string }) {
+export async function upsertBehaviorMemory(user: SessionUser, values: { id?: string; content: string; tags?: string; summary?: string }) {
   if (user.role !== "admin") return null;
   const id = values.id || randomUUID();
-  const existing = values.id ? row(getDb().prepare("SELECT id FROM behavior_memories WHERE id = ? AND tenant_id = ?").get(values.id, user.tenantId)) : null;
+  const existing = values.id ? await one("SELECT id FROM behavior_memories WHERE id = $1 AND tenant_id = $2", [values.id, user.tenantId]) : null;
   if (existing) {
-    getDb()
-      .prepare("UPDATE behavior_memories SET content = ?, tags = ?, summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?")
-      .run(values.content, values.tags ?? "", values.summary ?? "", id, user.tenantId);
+    await exec(
+      "UPDATE behavior_memories SET content = $1, tags = $2, summary = $3, updated_at = NOW() WHERE id = $4 AND tenant_id = $5",
+      [values.content, values.tags ?? "", values.summary ?? "", id, user.tenantId],
+    );
     return id;
   }
-  getDb()
-    .prepare("INSERT INTO behavior_memories (id, tenant_id, content, tags, summary) VALUES (?, ?, ?, ?, ?)")
-    .run(id, user.tenantId, values.content, values.tags ?? "", values.summary ?? "");
+  await exec(
+    "INSERT INTO behavior_memories (id, tenant_id, content, tags, summary) VALUES ($1, $2, $3, $4, $5)",
+    [id, user.tenantId, values.content, values.tags ?? "", values.summary ?? ""],
+  );
   return id;
 }
 
-export function deleteBehaviorMemory(user: SessionUser, memoryId: string) {
+export async function deleteBehaviorMemory(user: SessionUser, memoryId: string) {
   if (user.role !== "admin") return;
-  getDb().prepare("DELETE FROM behavior_memories WHERE id = ? AND tenant_id = ?").run(memoryId, user.tenantId);
+  await exec("DELETE FROM behavior_memories WHERE id = $1 AND tenant_id = $2", [memoryId, user.tenantId]);
 }

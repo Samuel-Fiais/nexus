@@ -195,7 +195,7 @@ function textResponseStream(text: string) {
   });
 }
 
-export function createChatStream(messages: CoreMessage[], context: ChatContext, onFinish: (text: string) => void) {
+export function createChatStream(messages: CoreMessage[], context: ChatContext, onFinish: (text: string) => void | Promise<void>) {
   const model = context.provider ? createModel(context.provider) : null;
 
   if (!model) {
@@ -220,7 +220,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
             content: z.string().min(1).describe("Conteúdo da memória a ser salva"),
           }),
           execute: async ({ type, content }) => {
-            upsertUserMemory(context.user, { type, content });
+            await upsertUserMemory(context.user, { type, content });
             return `Memória salva com sucesso (${type}).`;
           },
         }),
@@ -231,7 +231,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
             query: z.string().optional().describe("Palavra-chave para buscar no conteúdo das memórias"),
           }),
           execute: async ({ type, query }) => {
-            const memories = listUserMemories(context.user, context.user.id);
+            const memories = await listUserMemories(context.user, context.user.id);
             let filtered = memories;
             if (type) filtered = filtered.filter((m) => m.type === type);
             if (query) {
@@ -247,7 +247,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
             id: z.string().min(1).describe("ID da memória a ser removida"),
           }),
           execute: async ({ id }) => {
-            deleteUserMemory(context.user, id);
+            await deleteUserMemory(context.user, id);
             return "Memória removida.";
           },
         }),
@@ -263,7 +263,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
           }),
           execute: async ({ title, content, sourceType, url }) => {
             if (context.user.role !== "admin") return "Apenas administradores podem criar memórias organizacionais.";
-            insertOrgMemory(context.user, { title, content, sourceType, url: url ?? null, tags: "", summary: "", filePath: null, fileName: null, mimeType: null });
+            await insertOrgMemory(context.user, { title, content, sourceType, url: url ?? null, tags: "", summary: "", filePath: null, fileName: null, mimeType: null });
             return `Memória organizacional "${title}" criada.`;
           },
         }),
@@ -273,7 +273,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
             query: z.string().optional().describe("Palavra-chave para buscar"),
           }),
           execute: async ({ query }) => {
-            const memories = listOrgMemories(context.user.tenantId);
+            const memories = await listOrgMemories(context.user.tenantId);
             let filtered = memories;
             if (query) {
               const q = query.toLowerCase();
@@ -289,7 +289,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
           }),
           execute: async ({ id }) => {
             if (context.user.role !== "admin") return "Apenas administradores podem remover memórias organizacionais.";
-            deleteOrgMemory(context.user, id);
+            await deleteOrgMemory(context.user, id);
             return "Memória organizacional removida.";
           },
         }),
@@ -302,7 +302,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
           }),
           execute: async ({ content }) => {
             if (context.user.role !== "admin") return "Apenas administradores podem criar diretrizes de comportamento.";
-            upsertBehaviorMemory(context.user, { content });
+            await upsertBehaviorMemory(context.user, { content });
             return "Diretriz de comportamento salva.";
           },
         }),
@@ -312,7 +312,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
             query: z.string().optional().describe("Palavra-chave para buscar"),
           }),
           execute: async ({ query }) => {
-            const memories = listBehaviorMemories(context.user.tenantId);
+            const memories = await listBehaviorMemories(context.user.tenantId);
             let filtered = memories;
             if (query) {
               const q = query.toLowerCase();
@@ -328,7 +328,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
           }),
           execute: async ({ id }) => {
             if (context.user.role !== "admin") return "Apenas administradores podem remover diretrizes de comportamento.";
-            deleteBehaviorMemory(context.user, id);
+            await deleteBehaviorMemory(context.user, id);
             return "Diretriz de comportamento removida.";
           },
         }),
