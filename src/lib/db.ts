@@ -117,7 +117,10 @@ export type LiveLinkExtractionRecord = {
 
 type DbRow = Record<string, unknown>;
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR =
+  process.env.VERCEL_ENV === "production" || process.env.VERCEL_ENV === "preview"
+    ? "/tmp/nexus-data"
+    : path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "nexus.sqlite");
 
 let db: DatabaseSync | null = null;
