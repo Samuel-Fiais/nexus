@@ -205,6 +205,7 @@ export function SettingsForm({
   }
 
   async function deleteProvider(id: string) {
+    if (!window.confirm("Tem certeza que deseja excluir este provedor?")) return;
     const response = await fetch(`/api/providers/${id}`, { method: "DELETE" });
     if (!response.ok) {
       toast.error("Não foi possível excluir o provedor.");
@@ -263,6 +264,7 @@ export function SettingsForm({
   }
 
   async function deleteUserMemory(id: string) {
+    if (!window.confirm("Tem certeza que deseja excluir esta memória do usuário?")) return;
     await fetch(`/api/user-memories/${id}`, { method: "DELETE" });
     setUserMemories((items) => items.filter((memory) => memory.id !== id));
   }
@@ -317,6 +319,7 @@ export function SettingsForm({
   }
 
   async function deleteOrgMemory(id: string) {
+    if (!window.confirm("Tem certeza que deseja excluir esta memória organizacional?")) return;
     await fetch(`/api/org-memories/${id}`, { method: "DELETE" });
     setOrgMemories((items) => items.filter((memory) => memory.id !== id));
   }
@@ -339,6 +342,7 @@ export function SettingsForm({
   }
 
   async function deleteBehaviorMemory(id: string) {
+    if (!window.confirm("Tem certeza que deseja excluir esta diretriz de comportamento?")) return;
     await fetch(`/api/behavior-memories/${id}`, { method: "DELETE" });
     setBehaviorMemories((items) => items.filter((memory) => memory.id !== id));
   }

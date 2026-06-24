@@ -1,16 +1,15 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState, useEffect } from "react";
+import { FormEvent, useMemo, useRef, useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { LogOut, Menu, MessageSquare, Moon, Plus, SendHorizontal, Settings, Sun, Trash2, X } from "lucide-react";
+import { Copy, LogOut, Menu, MessageSquare, Moon, Plus, SendHorizontal, Settings, Square, Sun, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -69,6 +68,8 @@ type ChatWorkspaceProps = {
   initialMessages: Message[];
 };
 
+const STREAM_STATUS_PREFIX = "__STATUS__:processing\n";
+
 function modelLabel(provider: Provider | null) {
   if (!provider) return "Sem modelo configurado";
   return `${provider.modelAlias || provider.name} / ${provider.model || "modelo não definido"}`;
@@ -97,6 +98,10 @@ function normalizeMessageTrace(message: Message): Message {
   return { ...message, content: parsed.content, trace: parsed.trace };
 }
 
+function stripStatusPrefix(text: string) {
+  return text.startsWith(STREAM_STATUS_PREFIX) ? text.slice(STREAM_STATUS_PREFIX.length) : text;
+}
+
 function referenceMarkdown(content: string, messageId: string, sources: TraceData["sources"]) {
   if (!sources.length) return content;
   const sourceNumbers = new Set(sources.map((source) => source.number));
@@ -104,6 +109,32 @@ function referenceMarkdown(content: string, messageId: string, sources: TraceDat
     const number = Number(value);
     return sourceNumbers.has(number) ? `[${match}](#fonte-${messageId}-${number})` : match;
   });
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Não foi possível copiar.");
+    }
+  }, [text]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="ml-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      aria-label={copied ? "Copiado" : "Copiar resposta"}
+    >
+      <Copy className="size-3.5" />
+      {copied ? "Copiado" : "Copiar"}
+    </button>
+  );
 }
 
 function TraceView({
@@ -186,6 +217,8 @@ export function ChatWorkspace({
   const [highlightedSource, setHighlightedSource] = useState<number | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState(resolvedProvider?.id ?? providers.find((provider) => provider.enabled)?.id ?? "");
   const viewportRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeId) ?? null;
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? resolvedProvider;
@@ -203,6 +236,14 @@ export function ChatWorkspace({
       behavior: "smooth",
     });
   }, [messages.length, isStreaming]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 44), 240);
+    textarea.style.height = `${nextHeight}px`;
+  }, [input]);
 
   async function loadConversation(id: string) {
     const response = await fetch(`/api/conversations/${id}`);
@@ -233,6 +274,7 @@ export function ChatWorkspace({
 
   async function deleteActiveConversation() {
     if (!activeId) return;
+    if (!window.confirm("Tem certeza que deseja excluir esta conversa?")) return;
     const response = await fetch(`/api/conversations/${activeId}`, { method: "DELETE" });
     if (!response.ok) {
       toast.error("Não foi possível excluir a conversa.");
@@ -248,14 +290,19 @@ export function ChatWorkspace({
     }
   }
 
+  function stopStreaming() {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }
+
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.replace("/login");
     router.refresh();
   }
 
-  async function submitMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitMessage(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
     const content = input.trim();
     if (!content || isStreaming) return;
 
@@ -265,6 +312,7 @@ export function ChatWorkspace({
     }
 
     setInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "44px";
     setIsStreaming(true);
 
     const localUserMessage: Message = {
@@ -281,6 +329,9 @@ export function ChatWorkspace({
       { ...localUserMessage, id: assistantId, role: "assistant", content: "" },
     ]);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -290,6 +341,7 @@ export function ChatWorkspace({
           content,
           providerId: user.role === "admin" ? selectedProviderId : undefined,
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -316,15 +368,29 @@ export function ChatWorkspace({
       if (!reader) throw new Error("Resposta vazia do servidor.");
       const decoder = new TextDecoder();
       let assistantContent = "";
+      let statusStripped = false;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         assistantContent += chunk;
-        setMessages((items) =>
-          items.map((message) => (message.id === assistantId ? { ...message, content: message.content + chunk } : message)),
-        );
+
+        let displayChunk = chunk;
+        if (!statusStripped) {
+          const stripped = stripStatusPrefix(assistantContent);
+          if (stripped.length < assistantContent.length) {
+            statusStripped = true;
+            displayChunk = stripped.slice(assistantContent.length - chunk.length);
+            assistantContent = stripped;
+          }
+        }
+
+        if (displayChunk) {
+          setMessages((items) =>
+            items.map((message) => (message.id === assistantId ? { ...message, content: message.content + displayChunk } : message)),
+          );
+        }
       }
 
       const finalChunk = decoder.decode();
@@ -335,10 +401,22 @@ export function ChatWorkspace({
         items.map((message) => (message.id === assistantId ? { ...message, content: parsed.content, trace: parsed.trace } : message)),
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erro ao enviar mensagem.");
-      setMessages((items) => items.filter((message) => message.id !== assistantId));
+      if (err instanceof Error && err.name === "AbortError") {
+        setMessages((items) => items.filter((message) => message.id !== assistantId));
+      } else {
+        toast.error(err instanceof Error ? err.message : "Erro ao enviar mensagem.");
+        setMessages((items) => items.filter((message) => message.id !== assistantId));
+      }
     } finally {
+      abortControllerRef.current = null;
       setIsStreaming(false);
+    }
+  }
+
+  function handleTextareaKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void submitMessage();
     }
   }
 
@@ -483,6 +561,9 @@ export function ChatWorkspace({
                     >
                       {message.role === "assistant" ? (
                         <>
+                          <div className="mb-1 flex items-center justify-end">
+                            <CopyButton text={message.content} />
+                          </div>
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
@@ -547,17 +628,28 @@ export function ChatWorkspace({
         </div>
 
         <form onSubmit={submitMessage} className="border-t border-border/70 bg-background/95 px-4 py-4 backdrop-blur md:px-8">
-          <div className="mx-auto flex max-w-3xl items-center gap-2 rounded-2xl border border-border/80 bg-card p-2 shadow-sm">
-            <Input
+          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-border/80 bg-card p-2 shadow-sm">
+            <textarea
+              ref={textareaRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
+              onKeyDown={handleTextareaKeyDown}
               placeholder="Digite sua mensagem..."
               disabled={isStreaming}
-              className="h-11 border-0 bg-transparent px-3 shadow-none focus-visible:ring-0"
+              rows={1}
+              className="min-h-[44px] w-full resize-none border-0 bg-transparent px-3 py-2.5 text-[0.95rem] leading-6 shadow-none outline-none focus-visible:ring-0"
             />
-            <Button type="submit" disabled={!input.trim() || isStreaming} className="h-10 rounded-xl px-4 shadow-sm">
-              {isStreaming ? "Enviando..." : <><SendHorizontal className="size-4" />Enviar</>}
-            </Button>
+            {isStreaming ? (
+              <Button type="button" onClick={stopStreaming} className="h-10 rounded-xl px-4 shadow-sm">
+                <Square className="size-4 fill-current" />
+                Parar
+              </Button>
+            ) : (
+              <Button type="submit" disabled={!input.trim()} className="h-10 rounded-xl px-4 shadow-sm">
+                <SendHorizontal className="size-4" />
+                Enviar
+              </Button>
+            )}
           </div>
         </form>
       </section>

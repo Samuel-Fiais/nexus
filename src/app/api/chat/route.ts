@@ -104,15 +104,17 @@ export async function POST(request: Request) {
     conversationId = await createConversation(user);
   }
 
-  const previousMessages = await listMessages(user, conversationId);
+  const [previousMessages, provider, userMemories, behaviorMemories, allOrgMemories] = await Promise.all([
+    listMessages(user, conversationId),
+    resolveProviderForUser(user, body?.providerId ?? null),
+    listUserMemories(user, user.id),
+    listBehaviorMemories(user.tenantId),
+    listOrgMemories(user.tenantId),
+  ]);
+
   const title = previousMessages.length === 0 ? content.slice(0, 60) : undefined;
   await insertMessage(conversationId, "user", content);
   await updateConversationAfterMessage(conversationId, title);
-
-  const provider = await resolveProviderForUser(user, body?.providerId ?? null);
-  const userMemories = await listUserMemories(user, user.id);
-  const behaviorMemories = await listBehaviorMemories(user.tenantId);
-  const allOrgMemories = await listOrgMemories(user.tenantId);
   const liveLinkUrls = extractUrlsFromTexts(collectLiveLinkTexts(content, previousMessages, allOrgMemories, userMemories, behaviorMemories));
   const resolvedLinks = await resolveLiveLinksForConversation(conversationId, liveLinkUrls);
   const orgMemories = relevantOrgMemories(withLiveLinkMemories(allOrgMemories, resolvedLinks), content);
@@ -130,6 +132,7 @@ export async function POST(request: Request) {
       await insertMessage(conversationId, "assistant", assistantText);
       await updateConversationAfterMessage(conversationId);
     },
+    request.signal,
   );
   response.headers.set("x-conversation-id", conversationId);
   response.headers.set("x-provider-label", encodeURIComponent(provider ? `${provider.modelAlias || provider.name} / ${provider.model}` : "Sem modelo configurado"));

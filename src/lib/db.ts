@@ -275,6 +275,12 @@ CREATE TABLE IF NOT EXISTS behavior_memories (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_tenant_user ON conversations(tenant_id, user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_memories_tenant_user ON user_memories(tenant_id, user_id);
+
 CREATE TABLE IF NOT EXISTS live_link_extractions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,

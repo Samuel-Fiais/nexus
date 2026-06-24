@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/auth";
 import { jsonError, readJson } from "@/lib/api";
 import { getTenant, insertOrgMemory, listOrgMemories, normalizeLiveLinkUrl, resolveProviderForUser } from "@/lib/db";
 import { curateMemory } from "@/lib/ai/chat";
+import { extractPDFText } from "@/lib/ai/pdf";
 
 export const runtime = "nodejs";
 
@@ -54,15 +55,23 @@ export async function POST(request: Request) {
 
     const file = form.get("file");
     if (file instanceof File && file.size > 0) {
-      await mkdir(UPLOAD_DIR, { recursive: true });
       fileName = file.name;
       mimeType = file.type || null;
-      filePath = path.join(UPLOAD_DIR, `${crypto.randomUUID()}-${file.name.replace(/[^\w.-]/g, "_")}`);
-      await writeFile(filePath, Buffer.from(await file.arrayBuffer()));
-      if (!content) {
-        content = file.type.startsWith("text/") || file.name.endsWith(".md")
-          ? await file.text()
-          : `Arquivo armazenado: ${file.name}. Tipo: ${file.type || "desconhecido"}. Caminho: ${filePath}.`;
+
+      if (sourceType === "pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        sourceType = "pdf";
+        const bytes = Buffer.from(await file.arrayBuffer());
+        const extracted = await extractPDFText(bytes);
+        content = extracted || `PDF enviado: ${file.name}`;
+      } else {
+        await mkdir(UPLOAD_DIR, { recursive: true });
+        filePath = path.join(UPLOAD_DIR, `${crypto.randomUUID()}-${file.name.replace(/[^\w.-]/g, "_")}`);
+        await writeFile(filePath, Buffer.from(await file.arrayBuffer()));
+        if (!content) {
+          content = file.type.startsWith("text/") || file.name.endsWith(".md")
+            ? await file.text()
+            : `Arquivo armazenado: ${file.name}. Tipo: ${file.type || "desconhecido"}.`;
+        }
       }
     }
   }

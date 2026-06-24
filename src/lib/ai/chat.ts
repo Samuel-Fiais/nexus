@@ -209,11 +209,15 @@ function fallbackAnswer(messages: CoreMessage[], context: ChatContext) {
   ].join(" ");
 }
 
-function textResponseStream(text: string) {
+function textResponseStream(text: string, statusChunk = "") {
   const encoder = new TextEncoder();
   const tokens = text.match(/\S+\s*/g) ?? [text];
   return new ReadableStream<Uint8Array>({
     async start(controller) {
+      if (statusChunk) {
+        controller.enqueue(encoder.encode(statusChunk));
+        await new Promise((resolve) => setTimeout(resolve, 8));
+      }
       for (const token of tokens) {
         controller.enqueue(encoder.encode(token));
         await new Promise((resolve) => setTimeout(resolve, 8));
@@ -267,6 +271,7 @@ function tracedTextResponse(
   textStream: AsyncIterable<string>,
   trace: TraceData,
   onFinish: (text: string) => void | Promise<void>,
+  statusChunk = "",
 ) {
   const encoder = new TextEncoder();
   let fullText = "";
@@ -275,6 +280,10 @@ function tracedTextResponse(
     new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
+          if (statusChunk) {
+            controller.enqueue(encoder.encode(statusChunk));
+            await new Promise((resolve) => setTimeout(resolve, 8));
+          }
           for await (const chunk of textStream) {
             fullText += chunk;
             controller.enqueue(encoder.encode(chunk));
@@ -295,13 +304,20 @@ function tracedTextResponse(
   );
 }
 
-export function createChatStream(messages: CoreMessage[], context: ChatContext, onFinish: (text: string) => void | Promise<void>) {
+const STATUS_CHUNK = "__STATUS__:processing\n";
+
+export function createChatStream(
+  messages: CoreMessage[],
+  context: ChatContext,
+  onFinish: (text: string) => void | Promise<void>,
+  abortSignal?: AbortSignal,
+) {
   const model = context.provider ? createModel(context.provider) : null;
 
   if (!model) {
     const text = fallbackAnswer(messages, context);
     onFinish(text);
-    return new Response(textResponseStream(text), {
+    return new Response(textResponseStream(text, STATUS_CHUNK), {
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   }
@@ -316,6 +332,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
       model,
       system: buildSystemPrompt(context),
       messages,
+      abortSignal,
       tools: {
         // ── User memories ──
         save_user_memory: tool({
@@ -438,7 +455,7 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
           },
         }),
       },
-      stopWhen: stepCountIs(5),
+      stopWhen: stepCountIs(3),
       onStepFinish(step) {
         trace.steps.push(traceStepFromResult(step));
       },
@@ -446,11 +463,11 @@ export function createChatStream(messages: CoreMessage[], context: ChatContext, 
         trace.sources = referencedSources(text, memorySources);
       },
     });
-    return tracedTextResponse(result.textStream, trace, onFinish);
+    return tracedTextResponse(result.textStream, trace, onFinish, STATUS_CHUNK);
   } catch {
     const text = fallbackAnswer(messages, context);
     onFinish(text);
-    return new Response(textResponseStream(text), {
+    return new Response(textResponseStream(text, STATUS_CHUNK), {
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   }

@@ -104,3 +104,9 @@ CREATE TABLE IF NOT EXISTS live_link_extractions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_live_link_extractions_conversation ON live_link_extractions(conversation_id);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_tenant_user ON conversations(tenant_id, user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_memories_tenant_user ON user_memories(tenant_id, user_id);

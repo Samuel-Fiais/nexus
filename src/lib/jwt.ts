@@ -1,14 +1,18 @@
 import "server-only";
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+if (!process.env.AUTH_SECRET && process.env.NODE_ENV === "production") {
+  throw new Error("AUTH_SECRET is required in production. Set a strong random secret in the environment.");
+}
 
 const SECRET = process.env.AUTH_SECRET || "nexus-dev-secret-change-in-production";
 const ALGO = "HS256";
 const TOKEN_EXPIRY = 14 * 24 * 60 * 60; // 14 days in seconds
 
 function hmacSign(payload: string): string {
-  const hmac = createHash("sha256");
-  hmac.update(payload + SECRET);
+  const hmac = createHmac("sha256", SECRET);
+  hmac.update(payload);
   return hmac.digest("base64url");
 }
 

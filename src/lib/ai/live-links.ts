@@ -140,14 +140,20 @@ export async function resolveLiveLinksForConversation(conversationId: string, ur
   const cachedByUrl = new Map((await listLiveLinkExtractions(conversationId)).map((record) => [record.url, record]));
   const resolved = new Map<string, ResolvedLiveLink>();
 
-  for (const url of normalizedUrls) {
+  const missing = normalizedUrls.filter((url) => {
     const cached = cachedByUrl.get(url);
-    if (cached) {
-      resolved.set(url, resolvedFromRecord(cached));
-      continue;
-    }
+    if (cached) resolved.set(url, resolvedFromRecord(cached));
+    return !cached;
+  });
 
-    const live = await fetchLiveLinkText(url);
+  const liveResults = await Promise.all(
+    missing.map(async (url) => {
+      const live = await fetchLiveLinkText(url);
+      return { url, live };
+    }),
+  );
+
+  for (const { url, live } of liveResults) {
     const stored = await upsertLiveLinkExtraction(conversationId, { url, ...live });
     resolved.set(
       url,
