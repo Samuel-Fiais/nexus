@@ -25,4 +25,8 @@
     <ProjectReference Include="..\Nexus.Domain\Nexus.Domain.csproj" />
     <ProjectReference Include="..\Nexus.Worker\Nexus.Worker.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="..\Nexus.Worker\appsettings*.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
 </Project>
