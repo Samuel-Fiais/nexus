@@ -1,0 +1,31 @@
+services:
+  nexus-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexus-api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:5000
+      - ConnectionStrings__NexusDb=/app/data/nexus.db
+      - LLM_PROVIDER=DeepSeek
+      - DeepSeek__ApiKey=${DEEPSEEK_API_KEY:-}
+      - Slack__SigningSecret=${SLACK_SIGNING_SECRET:-}
+      - Slack__BotToken=${SLACK_BOT_TOKEN:-}
+      - Knowledge__LocalFolderPath=/app/knowledge
+      - Admin__ApiKey=${ADMIN_API_KEY:-}
+    volumes:
+      - nexus-data:/app/data
+      - ./knowledge:/app/knowledge:ro
+    networks:
+      - nexus-network
+
+volumes:
+  nexus-data:
+
+networks:
+  nexus-network:
+    driver: bridge
