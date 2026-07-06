@@ -32,7 +32,6 @@ builder.Services.AddControllers();
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddOpenApi();
 builder.Services.AddSwaggerGen(options =>
 {
     // Permite informar o header X-Admin-Api-Key uma vez no botao "Authorize" do Swagger UI,
@@ -97,8 +96,11 @@ if (app.Environment.IsDevelopment())
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference();
+    app.UseSwagger();
+    app.MapScalarApiReference(options =>
+    {
+        options.WithOpenApiRoutePattern("/swagger/v1/swagger.json");
+    });
 }
 
 app.UseHttpsRedirection();
