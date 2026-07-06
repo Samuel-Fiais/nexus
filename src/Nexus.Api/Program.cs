@@ -27,15 +27,11 @@ builder.Host.UseSerilog(
             )
 );
 
-// Add services to the container.
 builder.Services.AddControllers();
 
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
-    // Permite informar o header X-Admin-Api-Key uma vez no botao "Authorize" do Swagger UI,
-    // aplicado automaticamente as chamadas dos endpoints /admin/*.
     options.AddSecurityDefinition(
         AdminApiKeyFilter.HeaderName,
         new OpenApiSecurityScheme
@@ -73,8 +69,6 @@ builder.Services.AddSlackIntegration(builder.Configuration);
 builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 builder.Services.AddScoped<AdminApiKeyFilter>();
 
-// Hospeda os workers de background (sync de KnowledgeSource e retencao) no proprio processo
-// da API, para nao depender de rodar o Nexus.Worker separadamente em desenvolvimento.
 builder.Services.Configure<SyncOptions>(builder.Configuration.GetSection("Sync"));
 builder.Services.Configure<RetentionOptions>(builder.Configuration.GetSection("Retention"));
 builder.Services.AddHostedService<SyncWorker>();
@@ -82,7 +76,6 @@ builder.Services.AddHostedService<RetentionWorker>();
 
 var app = builder.Build();
 
-// Aplica migrations e seeds automaticamente em ambiente de desenvolvimento.
 if (app.Environment.IsDevelopment())
 {
     using var scope = app.Services.CreateScope();
@@ -93,7 +86,6 @@ if (app.Environment.IsDevelopment())
     await DevelopmentSeeder.SeedAsync(db, localFolderPath);
 }
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -104,12 +96,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.UseAuthorization();
-
 app.MapControllers();
-
 app.Run();
 
-// Exposto para testes de integracao (WebApplicationFactory).
 public partial class Program { }
