@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Nexus.Domain\Nexus.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.Application\Nexus.Application.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.Persistence\Nexus.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.Llm.DeepSeek\Nexus.Llm.DeepSeek.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.Slack\Nexus.Slack.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.Api\Nexus.Api.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.KnowledgeSources\Nexus.KnowledgeSources.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.KnowledgeSources.LocalFolder\Nexus.KnowledgeSources.LocalFolder.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.KnowledgeSources.FileExtractors\Nexus.KnowledgeSources.FileExtractors.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.KnowledgeSources.Tavily\Nexus.KnowledgeSources.Tavily.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.KnowledgeSources.Abstractions\Nexus.KnowledgeSources.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

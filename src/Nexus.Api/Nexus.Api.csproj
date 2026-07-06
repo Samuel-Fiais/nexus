@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>a0c53744-7d40-4875-a59b-3b644eb36a92</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nexus.Application\Nexus.Application.csproj" />
+    <ProjectReference Include="..\Nexus.Persistence\Nexus.Persistence.csproj" />
+    <ProjectReference Include="..\Nexus.Llm\Nexus.Llm.csproj" />
+    <ProjectReference Include="..\Nexus.KnowledgeSources\Nexus.KnowledgeSources.csproj" />
+    <ProjectReference Include="..\Nexus.Slack\Nexus.Slack.csproj" />
+    <ProjectReference Include="..\Nexus.Domain\Nexus.Domain.csproj" />
+    <ProjectReference Include="..\Nexus.Worker\Nexus.Worker.csproj" />
+  </ItemGroup>
+</Project>
