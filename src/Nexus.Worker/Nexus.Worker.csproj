@@ -19,4 +19,8 @@
     <ProjectReference Include="..\Nexus.KnowledgeSources\Nexus.KnowledgeSources.csproj" />
     <ProjectReference Include="..\Nexus.Domain\Nexus.Domain.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Update="appsettings.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
 </Project>

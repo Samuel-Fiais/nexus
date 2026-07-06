@@ -1,5 +1,7 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi.Writers;
 using Nexus.Api.Admin;
 using Nexus.Application.DependencyInjection;
 using Nexus.KnowledgeSources.DependencyInjection;
@@ -11,6 +13,7 @@ using Nexus.Slack.DependencyInjection;
 using Nexus.Worker;
 using Scalar.AspNetCore;
 using Serilog;
+using Swashbuckle.AspNetCore.Swagger;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,6 +33,7 @@ builder.Host.UseSerilog(
 builder.Services.AddControllers();
 
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddOpenApi();
 builder.Services.AddSwaggerGen(options =>
 {
     options.AddSecurityDefinition(
@@ -88,11 +92,8 @@ if (app.Environment.IsDevelopment())
 
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.MapScalarApiReference(options =>
-    {
-        options.WithOpenApiRoutePattern("/swagger/v1/swagger.json");
-    });
+    app.MapOpenApi();
+    app.MapScalarApiReference();
 }
 
 app.UseHttpsRedirection();
@@ -101,3 +102,28 @@ app.MapControllers();
 app.Run();
 
 public partial class Program { }
+
+internal static class OpenApiCompatibilityExtensions
+{
+    public static IServiceCollection AddOpenApi(this IServiceCollection services)
+    {
+        return services;
+    }
+
+    public static IEndpointConventionBuilder MapOpenApi(this IEndpointRouteBuilder endpoints)
+    {
+        return endpoints.MapGet(
+            "/openapi/{documentName}.json",
+            (ISwaggerProvider swaggerProvider, string documentName) =>
+            {
+                var swagger = swaggerProvider.GetSwagger(documentName);
+
+                using var stringWriter = new StringWriter(CultureInfo.InvariantCulture);
+                var jsonWriter = new OpenApiJsonWriter(stringWriter);
+                swagger.SerializeAsV3(jsonWriter);
+
+                return Results.Text(stringWriter.ToString(), "application/json");
+            }
+        );
+    }
+}
