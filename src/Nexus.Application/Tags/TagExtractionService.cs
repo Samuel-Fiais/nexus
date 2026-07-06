@@ -34,7 +34,7 @@ public class TagExtractionService(ITagRepository tagRepository) : ITagExtraction
             {
                 var tagTokens = HashingEmbeddingProvider.Tokenize(tag.Name.Replace('-', ' '))
                     .ToList();
-                return tagTokens.Count > 0 && tagTokens.All(questionTokens.Contains);
+                return tagTokens.Count > 0 && tagTokens.Any(questionTokens.Contains);
             })
             .Select(tag => tag.Slug)
             .Distinct()
