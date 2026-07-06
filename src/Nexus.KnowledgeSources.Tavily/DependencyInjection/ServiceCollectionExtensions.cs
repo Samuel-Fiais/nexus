@@ -11,9 +11,8 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration
     )
     {
-        services.Configure<TavilyOptions>(configuration.GetSection("Tavily"));
-        services.AddHttpClient(TavilyWebContentExtractor.HttpClientName);
-        services.AddScoped<IWebContentExtractor, TavilyWebContentExtractor>();
+        services.AddHttpClient(FirecrawlWebContentExtractor.HttpClientName);
+        services.AddScoped<IWebContentExtractor, FirecrawlWebContentExtractor>();
 
         return services;
     }

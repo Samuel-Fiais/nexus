@@ -73,25 +73,6 @@ public class SyncWorker(
             {
                 try
                 {
-                    // Reindexacao de URLs (WebsiteLink) fica desativada por enquanto: se o
-                    // documento ja existe, nao extraimos o conteudo de novo (evita chamadas
-                    // desnecessarias/repetidas a extractors externos como a Tavily a cada ciclo).
-                    // Demais tipos (ex: Markdown, Pdf) sao relidos e reindexados quando o
-                    // conteudo muda (ver DocumentIngestionService).
-                    if (item.ContentType == DocumentContentType.WebsiteLink)
-                    {
-                        var existingDocument =
-                            await documentRepository.GetBySourceAndExternalIdAsync(
-                                source.Id,
-                                item.ExternalId,
-                                ct
-                            );
-                        if (existingDocument is not null)
-                        {
-                            continue;
-                        }
-                    }
-
                     var content = await provider.ReadContentAsync(source, item, ct);
                     var reindexed = await ingestionService.IngestAsync(
                         source.Id,
