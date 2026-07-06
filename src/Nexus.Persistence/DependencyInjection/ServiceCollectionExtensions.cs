@@ -17,9 +17,9 @@ public static class ServiceCollectionExtensions
     )
     {
         var connectionString =
-            configuration.GetConnectionString("Default") ?? "Data Source=nexus.db";
+            configuration.GetConnectionString("Default") ?? "Host=localhost;Database=nexus;Username=postgres;Password=postgres";
 
-        services.AddDbContext<NexusDbContext>(options => options.UseSqlite(connectionString));
+        services.AddDbContext<NexusDbContext>(options => options.UseNpgsql(connectionString));
 
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IUserUsageRepository, UserUsageRepository>();

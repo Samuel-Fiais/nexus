@@ -80,12 +80,16 @@ builder.Services.AddHostedService<RetentionWorker>();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
+// Roda migrations em qualquer ambiente (necessário para banco funcionar)
+NexusDbContext db;
 {
     using var scope = app.Services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+    db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
     db.Database.Migrate();
+}
 
+if (app.Environment.IsDevelopment())
+{
     var localFolderPath = app.Configuration["Knowledge:LocalFolderPath"] ?? "./knowledge";
     await DevelopmentSeeder.SeedAsync(db, localFolderPath);
 }

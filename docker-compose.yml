@@ -10,7 +10,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5000
-      - ConnectionStrings__NexusDb=/app/data/nexus.db
+      - ConnectionStrings__Default=Host=firecrawl-nuq-postgres-1;Database=nexus;Username=postgres;Password=postgres
       - LLM_PROVIDER=DeepSeek
       - DeepSeek__ApiKey=${DEEPSEEK_API_KEY:-}
       - Slack__SigningSecret=${SLACK_SIGNING_SECRET:-}
@@ -18,14 +18,15 @@ services:
       - Knowledge__LocalFolderPath=/app/knowledge
       - Admin__ApiKey=${ADMIN_API_KEY:-}
     volumes:
-      - nexus-data:/app/data
       - ./knowledge:/app/knowledge:ro
     networks:
       - nexus-network
+      - firecrawl_backend
 
-volumes:
-  nexus-data:
+volumes: {}
 
 networks:
   nexus-network:
     driver: bridge
+  firecrawl_backend:
+    external: true
