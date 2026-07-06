@@ -33,7 +33,8 @@ public class LlmTagGenerationService(
             var systemPrompt =
                 "Extraia de 10 a 15 palavras-chave e entidades importantes deste documento. "
                 + "Responda SOMENTE com um array JSON de strings (sem markdown, sem explicação). "
-                + "Inclua: nomes de pessoas, empresas, produtos, cargos, temas principais, "
+                + "Inclua: nomes de pessoas, empresas, produtos, cargos, papeis e relacionamentos "
+                + "(sócios, fundador, equipe, parceiro), temas principais, "
                 + "e qualquer termo relevante que descreva o assunto do documento. "
                 + "Use kebab-case, minusculas, sem acentos. "
                 + "Exemplo: [\"joao-silva\", \"diretoria\", \"fintech\", \"inovacao\", "
