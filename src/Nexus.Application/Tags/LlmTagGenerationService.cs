@@ -16,7 +16,7 @@ public class LlmTagGenerationService(
     ILogger<LlmTagGenerationService> logger
 ) : ITagGenerationService
 {
-    private const int MaxTags = 8;
+    private const int MaxTags = 15;
     private const int MaxContentChars = 4000;
 
     public async Task<IReadOnlyList<string>> GenerateTagsAsync(
@@ -31,15 +31,13 @@ public class LlmTagGenerationService(
                 content.Length <= MaxContentChars ? content : content[..MaxContentChars];
 
             var systemPrompt =
-                "Você gera tags de classificação para documentos de uma base de conhecimento "
-                + "corporativa da Festpay (fintech brasileira). "
-                + "Responda SOMENTE com um array JSON de strings (sem markdown, sem explicação), "
-                + $"contendo de 5 a {MaxTags} tags curtas em portugues. "
-                + "Inclua tags para: nomes de pessoas mencionadas, cargos, entidades (empresas, "
-                + "produtos), temas de negócio, e palavras-chave relevantes. "
+                "Extraia de 10 a 15 palavras-chave e entidades importantes deste documento. "
+                + "Responda SOMENTE com um array JSON de strings (sem markdown, sem explicação). "
+                + "Inclua: nomes de pessoas, empresas, produtos, cargos, temas principais, "
+                + "e qualquer termo relevante que descreva o assunto do documento. "
                 + "Use kebab-case, minusculas, sem acentos. "
-                + "Exemplo: [\"marco-epelman\", \"igor-moura\", \"ceo\", \"fintech\", "
-                + "\"pagamentos-digitais\", \"cantina-escolar\", \"socios\", \"fundadores\"]";
+                + "Exemplo: [\"joao-silva\", \"diretoria\", \"fintech\", \"inovacao\", "
+                + "\"gestao-financeira\", \"parcerias\", \"expansao\"]";
 
             var userPrompt = $"Titulo: {title}\n\nConteudo:\n{truncated}";
 
