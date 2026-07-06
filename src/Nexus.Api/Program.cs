@@ -90,11 +90,12 @@ if (app.Environment.IsDevelopment())
     await DevelopmentSeeder.SeedAsync(db, localFolderPath);
 }
 
-if (app.Environment.IsDevelopment())
+// Configura OpenAPI e Scalar (disponível em todos os ambientes)
+app.MapOpenApi();
+app.MapScalarApiReference(options =>
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference();
-}
+    options.WithOpenApiRoutePattern("/openapi/{documentName}.json");
+});
 
 app.UseHttpsRedirection();
 app.UseAuthorization();
