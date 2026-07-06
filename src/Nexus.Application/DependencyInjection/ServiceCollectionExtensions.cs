@@ -5,6 +5,7 @@ using Nexus.Application.Embeddings;
 using Nexus.Application.Ingestion;
 using Nexus.Application.Tags;
 using Nexus.Application.UseCases;
+using Nexus.Llm.DeepSeek;
 
 namespace Nexus.Application.DependencyInjection;
 
@@ -16,10 +17,11 @@ public static class ServiceCollectionExtensions
     )
     {
         services.Configure<AppOptions>(configuration.GetSection("App"));
+        services.AddHttpClient(DeepSeekEmbeddingProvider.HttpClientName);
 
         services.AddScoped<IQuotaService, QuotaService>();
         services.AddScoped<IQuestionOrchestrator, QuestionOrchestrator>();
-        services.AddScoped<IEmbeddingProvider, HashingEmbeddingProvider>();
+        services.AddScoped<IEmbeddingProvider, DeepSeekEmbeddingProvider>();
         services.AddScoped<IDocumentIngestionService, DocumentIngestionService>();
         services.AddScoped<ITagGenerationService, LlmTagGenerationService>();
         services.AddScoped<ITagExtractionService, TagExtractionService>();

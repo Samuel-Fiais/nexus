@@ -31,10 +31,15 @@ public class LlmTagGenerationService(
                 content.Length <= MaxContentChars ? content : content[..MaxContentChars];
 
             var systemPrompt =
-                "Voce gera tags de classificacao para documentos de uma base de conhecimento "
-                + "corporativa. Responda SOMENTE com um array JSON de strings (sem markdown, sem "
-                + $"explicacao), contendo de 3 a {MaxTags} tags curtas em portugues, minusculas, "
-                + "no formato kebab-case. Exemplo: [\"ferias\",\"folha-de-pagamento\",\"rh\"]";
+                "Você gera tags de classificação para documentos de uma base de conhecimento "
+                + "corporativa da Festpay (fintech brasileira). "
+                + "Responda SOMENTE com um array JSON de strings (sem markdown, sem explicação), "
+                + $"contendo de 5 a {MaxTags} tags curtas em portugues. "
+                + "Inclua tags para: nomes de pessoas mencionadas, cargos, entidades (empresas, "
+                + "produtos), temas de negócio, e palavras-chave relevantes. "
+                + "Use kebab-case, minusculas, sem acentos. "
+                + "Exemplo: [\"marco-epelman\", \"igor-moura\", \"ceo\", \"fintech\", "
+                + "\"pagamentos-digitais\", \"cantina-escolar\", \"socios\", \"fundadores\"]";
 
             var userPrompt = $"Titulo: {title}\n\nConteudo:\n{truncated}";
 
