@@ -31,29 +31,10 @@ public class DeepSeekEmbeddingProvider(
             return HashingEmbeddingProvider.GenerateEmbedding(text);
         }
 
-        try
-        {
-            return await GenerateEmbeddingAsync(text, PrimaryModel, ct);
-        }
-        catch (Exception primaryEx) when (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                return await GenerateEmbeddingAsync(text, FallbackModel, ct);
-            }
-            catch (Exception fallbackEx) when (!ct.IsCancellationRequested)
-            {
-                logger.LogWarning(
-                    fallbackEx,
-                    "Falha ao gerar embedding via DeepSeek com os modelos {PrimaryModel} e {FallbackModel}. Usando embedding local por hashing. Erro inicial: {PrimaryError}",
-                    PrimaryModel,
-                    FallbackModel,
-                    primaryEx.Message
-                );
-
-                return HashingEmbeddingProvider.GenerateEmbedding(text);
-            }
-        }
+        // A DeepSeek nao possui modelo de embedding dedicado. Usando hashing local
+        // que, combinado com as tags semanticas do auto-tagging melhorado, atende ao
+        // cenario atual. Trocar por OpenAI text-embedding-3-small ou similar no futuro.
+        return HashingEmbeddingProvider.GenerateEmbedding(text);
     }
 
     private async Task<float[]> GenerateEmbeddingAsync(
