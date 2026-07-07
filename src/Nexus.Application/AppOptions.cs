@@ -21,4 +21,9 @@ public class AppOptions
     /// o historico e renovar a janela de conversa.
     /// </summary>
     public int SessionMessageWindowSize { get; set; } = 10;
+
+    /// <summary>
+    /// URL base publica para gerar links para documentos (env var App__PublicBaseUrl).
+    /// </summary>
+    public string PublicBaseUrl { get; set; } = "https://nexus.yellowduck.com.br";
 }

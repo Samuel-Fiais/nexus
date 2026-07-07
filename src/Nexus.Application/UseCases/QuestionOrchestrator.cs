@@ -284,8 +284,17 @@ public partial class QuestionOrchestrator(
                     ? InteractionStatus.InsufficientContext
                     : InteractionStatus.Success;
             var sourceTitles = effectiveChunks.Select(c => c.DocumentTitle).Distinct().ToList();
+            var sourceIds = effectiveChunks
+                .Select(c => c.Chunk.DocumentId)
+                .Distinct()
+                .ToList();
             var usedSourceTitles = ExtractUsedSources(result.Answer, sourceTitles);
-            var answer = AppendSources(SanitizeAnswer(result.Answer), usedSourceTitles);
+            var answer = AppendSources(
+                SanitizeAnswer(result.Answer),
+                usedSourceTitles,
+                sourceIds,
+                _appOptions.PublicBaseUrl
+            );
 
             var interaction = await SaveInteractionAsync(
                 user.Id,
@@ -925,12 +934,24 @@ public partial class QuestionOrchestrator(
             .ToList();
     }
 
-    private static string AppendSources(string answer, IReadOnlyList<string> sourceTitles)
+    private static string AppendSources(
+        string answer,
+        IReadOnlyList<string> sourceTitles,
+        IReadOnlyList<Guid> allSourceIds,
+        string publicBaseUrl
+    )
     {
         if (sourceTitles.Count == 0)
         {
             return answer;
         }
+
+        // Mapeia titulo → id (pega o primeiro id encontrado para cada titulo)
+        var titleToId = allSourceIds
+            .Select((id, i) => (Id: id, Title: sourceTitles.ElementAtOrDefault(i)))
+            .Where(x => x.Title is not null)
+            .GroupBy(x => x.Title)
+            .ToDictionary(g => g.Key!, g => g.First().Id);
 
         var sb = new StringBuilder(answer.TrimEnd());
         sb.AppendLine();
@@ -938,7 +959,17 @@ public partial class QuestionOrchestrator(
         sb.AppendLine("Fontes consultadas:");
         foreach (var title in sourceTitles)
         {
-            sb.AppendLine($"• {title}");
+            var url = titleToId.TryGetValue(title, out var id)
+                ? $"{publicBaseUrl.TrimEnd('/')}/knowledge/documents/{id}"
+                : null;
+            if (url is not null)
+            {
+                sb.AppendLine($"• <{url}|{title}>");
+            }
+            else
+            {
+                sb.AppendLine($"• {title}");
+            }
         }
 
         return sb.ToString().TrimEnd();
