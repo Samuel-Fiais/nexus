@@ -45,9 +45,14 @@ public class KnowledgeController(
         var contentType = document.ContentType switch
         {
             DocumentContentType.Pdf => "application/pdf",
-            DocumentContentType.Markdown => "text/markdown",
+            DocumentContentType.Markdown => "text/markdown; charset=utf-8",
             _ => "application/octet-stream",
         };
+
+        // Forca download em vez de renderizacao inline, ja que o navegador pode nao
+        // conseguir exibir markdown adequadamente.
+        Response.Headers.ContentDisposition =
+            $"attachment; filename=\"{downloadName}\"";
 
         return PhysicalFile(fullPath, contentType, downloadName);
     }
